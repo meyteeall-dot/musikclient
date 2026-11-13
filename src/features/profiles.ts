@@ -9,11 +9,11 @@ const PAUSE_MS = 6500   // < 10 Anfragen/Minute: Gemini-Gratislimit
 function localStats(tracks: Track[]) {
   const count = new Map<string, number>()
   for (const t of tracks) for (const a of t.artists) count.set(a, (count.get(a) ?? 0) + 1)
-  const artists = [...count].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([a]) => a)
+  const artists = [...count].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([a]) => a)
   const ys = tracks.map(t => t.year).filter((y): y is number => !!y).sort((a, b) => a - b)
   const years: [number, number] | undefined = ys.length ? [ys[Math.floor(ys.length * .1)], ys[Math.floor((ys.length - 1) * .9)]] : undefined
-  const step = Math.max(1, Math.floor(tracks.length / 8))
-  const examples = tracks.filter((_, i) => i % step === 0).slice(0, 8).map(t => `${t.artists[0]} – ${t.name}`)
+  const step = Math.max(1, Math.floor(tracks.length / 6))
+  const examples = tracks.filter((_, i) => i % step === 0).slice(0, 6).map(t => `${t.artists[0]} – ${t.name}`)
   return { artists, years, examples }
 }
 

@@ -5,13 +5,23 @@ import { kv } from '../data/db'
 export interface AiRequest { system: string; prompt: string; json?: boolean }
 interface Provider { name: string; available(): Promise<boolean>; complete(r: AiRequest): Promise<string> }
 
-export const AI_DEFAULTS = { geminiModel: 'gemini-2.5-flash', groqModel: 'openai/gpt-oss-120b' }
+export const AI_DEFAULTS = { geminiModel: 'gemini-3.8-flash', groqModel: 'openai/gpt-oss-120b' }
 
+class AiError extends Error { constructor(public status: number, msg: string) { super(msg) } }
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
+
+/** POST mit Geduld bei kurzen Limits (429): wartet laut Anbieter, mind. 3/8/20 s, dann gibt er auf. */
 async function post(url: string, headers: Record<string, string>, body: unknown) {
-  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) })
-  const j = await r.json().catch(() => ({}))
-  if (!r.ok) throw new Error(`${r.status} ${j.error?.message ?? ''}`.trim())
-  return j
+  for (let attempt = 0; ; attempt++) {
+    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) })
+    const j = await r.json().catch(() => ({}))
+    if (r.ok) return j
+    const msg = `${r.status} ${j.error?.message ?? ''}`.trim()
+    if (r.status !== 429 || attempt >= 3) throw new AiError(r.status, msg)
+    const m = msg.match(/try again in ([\d.]+)(ms|s)/i)
+    const said = Number(r.headers.get('retry-after')) * 1000 || (m ? +m[1] * (m[2] === 's' ? 1000 : 1) : 0)
+    await sleep(Math.max(said, [3000, 8000, 20000][attempt]))
+  }
 }
 
 const gemini: Provider = {
@@ -19,12 +29,21 @@ const gemini: Provider = {
   available: async () => !!(await kv.get('geminiKey')),
   async complete({ system, prompt, json }) {
     const model = (await kv.get<string>('geminiModel')) || AI_DEFAULTS.geminiModel
-    const j = await post(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-      { 'x-goog-api-key': (await kv.get<string>('geminiKey'))! }, {
+    const key = (await kv.get<string>('geminiKey'))!
+    const req = (m: string) => post(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`,
+      { 'x-goog-api-key': key }, {
         systemInstruction: { parts: [{ text: system }] },
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         generationConfig: { temperature: .4, ...(json ? { responseMimeType: 'application/json' } : {}) },
       })
+    let j
+    try { j = await req(model) } catch (e) {
+      // Modell abgeschaltet: Google nennt den Nachfolger in der Fehlermeldung – übernehmen und merken
+      const next = e instanceof AiError && e.status === 404 && e.message.match(/use models\/([\w.-]+)/)?.[1]
+      if (!next || next === model) throw e
+      j = await req(next)
+      await kv.set('geminiModel', next)
+    }
     const text = j.candidates?.[0]?.content?.parts?.map((p: any) => p.text ?? '').join('')
     if (!text) throw new Error('leere Antwort')
     return text
@@ -39,6 +58,7 @@ const groq: Provider = {
     const j = await post('https://api.groq.com/openai/v1/chat/completions',
       { Authorization: `Bearer ${await kv.get<string>('groqKey')}` }, {
         model, temperature: .4,
+        ...(model.startsWith('openai/gpt-oss') ? { reasoning_effort: 'low' } : {}),   // Denk-Tokens zählen ins Minutenlimit
         messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }],
         ...(json ? { response_format: { type: 'json_object' } } : {}),
       })
