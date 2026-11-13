@@ -12,10 +12,11 @@ import { CoverRow } from './Cover'
 import { Player } from './Player'
 import { PlaylistView } from './PlaylistView'
 import { Search } from './Search'
+import { Tools } from './Tools'
 import { applyGlass, applyTheme, GLASS_DEFAULTS, GLASS_SLIDERS, THEMES, type GlassValues, type ThemeId } from './glass/engine'
 
-type Tab = 'search' | 'playlists' | 'player' | 'settings'
-const TABS: Tab[] = ['search', 'playlists', 'player', 'settings']
+type Tab = 'search' | 'playlists' | 'tools' | 'player' | 'settings'
+const TABS: Tab[] = ['search', 'playlists', 'tools', 'player', 'settings']
 const SYNC_EVERY = 15 * 60 * 1000
 
 export function App() {
@@ -122,6 +123,7 @@ export function App() {
             : <Playlists items={playlists} profiles={profiles} excluded={excluded} onOpen={setOpenId} />)
           : <div className="panel glass center"><p className="cap">Noch nicht mit Spotify verbunden.</p>
               <button className="pill glass hot" onClick={() => setTab('settings')}>Zu den Einstellungen</button></div>)}
+        {tab === 'tools' && <Tools onError={setError} />}
         {tab === 'player' && <Player onError={setError} />}
         {tab === 'settings' && <Settings loggedIn={!!loggedIn} onError={setError} onAiSaved={sync}
           onLogout={async () => { await logout(); setLoggedIn(false) }} />}
@@ -141,8 +143,9 @@ function Scroll({ children }: { children: React.ReactNode }) {
 const TAB_UI: Record<Tab, [string, React.ReactNode]> = {
   search: ['Suche', <><circle cx="11" cy="11" r="6.5" /><path d="M16 16l4.5 4.5" /></>],
   playlists: ['Playlists', <path d="M4 6h12M4 12h12M4 18h8M18 16v-9l3-1" />],
+  tools: ['Werkzeuge', <path d="M14.5 6.5a4 4 0 0 0-5.3 5.3L4 17l3 3 5.2-5.2a4 4 0 0 0 5.3-5.3l-2.5 2.5-2.5-2.5z" />],
   player: ['Player', <><circle cx="12" cy="12" r="8.5" /><path d="M10 8.5v7l5.5-3.5z" /></>],
-  settings: ['Einstellungen', <><path d="M4 8h9M17 8h3M4 16h3M11 16h9" /><circle cx="15" cy="8" r="2" /><circle cx="9" cy="16" r="2" /></>],
+  settings: ['Optionen', <><path d="M4 8h9M17 8h3M4 16h3M11 16h9" /><circle cx="15" cy="8" r="2" /><circle cx="9" cy="16" r="2" /></>],
 }
 
 /** Tableiste mit gleitender Glaslinse (aus Druckpunkt): antippen oder die Linse seitlich ziehen. */
