@@ -1,5 +1,5 @@
-import { getAll, me } from '../spotify/api'
-import { db, kv, type Playlist } from './db'
+import { ApiError, getAll, me } from '../spotify/api'
+import { db, kv, type Playlist, type Track } from './db'
 
 export interface SyncResult { added: number; changed: number; removed: number; total: number }
 
@@ -35,8 +35,48 @@ export async function syncPlaylists(): Promise<SyncResult> {
     }
     tx.store.put(pl)
   }
-  for (const id of local.keys()) { tx.store.delete(id); res.removed++ }
   await tx.done
+  for (const id of local.keys()) {   // gelöscht oder entfolgt: Playlist samt Tracks entfernen
+    await d.delete('playlists', id); await d.delete('tracks', id); res.removed++
+  }
   await kv.set('lastSync', Date.now())
   return res
+}
+
+const ITEM_FIELDS = 'id,uri,name,type,artists(id,name),album(name,release_date)'
+// Feld heißt seit Feb. 2026 "item", vorher "track" – beide anfordern
+const FIELDS = `next,items(item(${ITEM_FIELDS}),track(${ITEM_FIELDS}))`
+
+/** Tracks aller Playlists einlesen, deren snapshot_id sich seit dem letzten Einlesen geändert hat. */
+export async function syncTracks(onProgress?: (done: number, todo: number) => void) {
+  const d = await db
+  const todo = (await d.getAll('playlists')).filter(p => p.tracksSnapshot !== p.snapshot_id)
+  let done = 0
+  for (const p of todo) {
+    onProgress?.(done, todo.length)
+    try {
+      const raw = await getAll<any>(`/playlists/${p.id}/items?limit=50&fields=${encodeURIComponent(FIELDS)}`)
+      const tracks: Track[] = []
+      for (const r of raw) {
+        const t = r.item ?? r.track
+        if (!t?.id || t.type !== 'track') continue   // lokale Dateien, Podcast-Folgen
+        tracks.push({
+          id: t.id, uri: t.uri, name: t.name,
+          artists: t.artists.map((a: any) => a.name), artistIds: t.artists.map((a: any) => a.id),
+          album: t.album?.name ?? '', year: parseInt(t.album?.release_date) || undefined,
+        })
+      }
+      await d.put('tracks', { id: p.id, tracks })
+      p.tracksBlocked = false
+    } catch (e) {
+      if (!(e instanceof ApiError) || (e.status !== 403 && e.status !== 404)) throw e
+      p.tracksBlocked = true   // nicht bei jedem Abgleich erneut versuchen, erst bei neuer snapshot_id
+    }
+    p.tracksSnapshot = p.snapshot_id
+    // Nur speichern, wenn die Playlist inzwischen nicht gelöscht wurde
+    if (await d.getKey('playlists', p.id)) await d.put('playlists', p)
+    done++
+  }
+  onProgress?.(done, todo.length)
+  return { done, blocked: todo.filter(p => p.tracksBlocked).length }
 }

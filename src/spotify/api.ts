@@ -3,6 +3,7 @@ import { accessToken } from './auth'
 const BASE = 'https://api.spotify.com/v1'
 
 export class NotLoggedIn extends Error {}
+export class ApiError extends Error { constructor(public status: number, msg: string) { super(msg) } }
 
 /** Spotify-Web-API-Aufruf mit Token-Erneuerung bei 401 und Warten bei 429. */
 export async function api<T = any>(path: string, init: RequestInit = {}, retry = 0): Promise<T> {
@@ -10,7 +11,7 @@ export async function api<T = any>(path: string, init: RequestInit = {}, retry =
   if (!token) throw new NotLoggedIn()
   const r = await fetch(path.startsWith('http') ? path : BASE + path, {
     ...init,
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...init.headers },
+    headers: { Authorization: `Bearer ${token}`, ...(init.body ? { 'Content-Type': 'application/json' } : {}), ...init.headers },
   })
   if (r.status === 401 && retry < 1) return api(path, init, retry + 1)
   if (r.status === 429 && retry < 5) {
@@ -18,7 +19,7 @@ export async function api<T = any>(path: string, init: RequestInit = {}, retry =
     await new Promise(res => setTimeout(res, wait * 1000))
     return api(path, init, retry + 2)
   }
-  if (!r.ok) throw new Error(`Spotify ${r.status}: ${(await r.text()).slice(0, 200)}`)
+  if (!r.ok) throw new ApiError(r.status, `Spotify ${r.status}: ${(await r.text()).slice(0, 200)}`)
   return (r.status === 204 ? undefined : r.json()) as T
 }
 

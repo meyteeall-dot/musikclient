@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { db, kv, type Playlist } from '../data/db'
-import { syncPlaylists } from '../data/sync'
+import { syncPlaylists, syncTracks } from '../data/sync'
 import { NotLoggedIn } from '../spotify/api'
 import { accessToken, handleRedirect, login, logout, redirectUri } from '../spotify/auth'
 import { glassScroll } from './glass/scroll'
@@ -20,17 +20,26 @@ export function App() {
 
   const load = async () => setPlaylists((await (await db).getAll('playlists')).sort((a, b) => a.name.localeCompare(b.name)))
 
+  const running = useRef(false)
   const sync = useCallback(async () => {
+    if (running.current) return   // Knopf, Timer und Start nicht doppelt laufen lassen
+    running.current = true
     setBusy(true)
     try {
       const r = await syncPlaylists()
       setStatus([r.added && `${r.added} neu`, r.changed && `${r.changed} geändert`, r.removed && `${r.removed} weg`].filter(Boolean).join(' · ') || 'aktuell')
       await load()
+      const t = await syncTracks((n, all) => all && setStatus(`Tracks ${n}/${all}`))
+      if (t.done) {
+        setStatus(`${t.done} Playlists eingelesen` + (t.blocked ? ` · ${t.blocked} gesperrt` : ''))
+        await load()
+      }
     } catch (e) {
       if (e instanceof NotLoggedIn) setLoggedIn(false)
       else setError(String((e as Error).message))
     }
     setBusy(false)
+    running.current = false
   }, [])
 
   useEffect(() => {
@@ -110,7 +119,7 @@ function Playlists({ items }: { items: Playlist[] }) {
   return <ul className="list">
     {items.map(p => <li key={p.id} className="row glass">
       {p.image ? <img src={p.image} alt="" loading="lazy" /> : <span className="ph" />}
-      <span className="meta"><b>{p.name}</b><small>{p.total} Songs · {p.ownedByMe ? 'eigene' : p.owner}</small></span>
+      <span className="meta"><b>{p.name}</b><small>{p.total} Songs · {p.ownedByMe ? 'eigene' : p.owner}{p.tracksBlocked ? ' · Tracks gesperrt' : ''}</small></span>
     </li>)}
   </ul>
 }
