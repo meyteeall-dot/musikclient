@@ -6,6 +6,7 @@ import { buildProfiles } from '../features/profiles'
 import { NotLoggedIn } from '../spotify/api'
 import { accessToken, handleRedirect, login, logout, redirectUri } from '../spotify/auth'
 import { glassScroll } from './glass/scroll'
+import { PlaylistView } from './PlaylistView'
 import { Search } from './Search'
 import { applyGlass, applyTheme, GLASS_DEFAULTS, GLASS_SLIDERS, THEMES, type GlassValues, type ThemeId } from './glass/engine'
 
@@ -15,6 +16,7 @@ const SYNC_EVERY = 15 * 60 * 1000
 
 export function App() {
   const [tab, setTab] = useState<Tab>('search')
+  const [openId, setOpenId] = useState<string | null>(null)
   const [loggedIn, setLoggedIn] = useState<boolean | null>(null)
   const [playlists, setPlaylists] = useState<Playlist[]>([])
   const [profiles, setProfiles] = useState(new Map<string, Profile>())
@@ -39,7 +41,7 @@ export function App() {
       await load()
       const t = await syncTracks((n, all) => all && setStatus(`Tracks ${n}/${all}`))
       if (t.done) {
-        setStatus(`${t.done} Playlists eingelesen` + (t.blocked ? ` · ${t.blocked} gesperrt` : ''))
+        setStatus(`${t.done} eingelesen` + (t.blocked ? ` · ${t.blocked} gesperrt` : ''))
         await load()
       }
       if (await hasAi()) {
@@ -80,6 +82,8 @@ export function App() {
     return () => { clearInterval(id); document.removeEventListener('visibilitychange', tick) }
   }, [loggedIn, sync])
 
+  const open = openId ? playlists.find(p => p.id === openId) : undefined
+
   return (
     <div className="app">
       <header className="top">
@@ -98,13 +102,14 @@ export function App() {
 
       {error && <div className="panel glass error" onClick={() => setError('')}>{error}</div>}
 
-      <Scroll key={tab}>
+      <Scroll key={tab + (openId ?? '')}>
         {tab === 'search' && (loggedIn
           ? <Search onError={setError} onAdded={load} />
           : <div className="panel glass center"><p className="cap">Noch nicht mit Spotify verbunden.</p>
               <button className="pill glass hot" onClick={() => setTab('settings')}>Zu den Einstellungen</button></div>)}
         {tab === 'playlists' && (loggedIn
-          ? <Playlists items={playlists} profiles={profiles} />
+          ? (open ? <PlaylistView p={open} profile={profiles.get(open.id)} onBack={() => setOpenId(null)} />
+            : <Playlists items={playlists} profiles={profiles} onOpen={setOpenId} />)
           : <div className="panel glass center"><p className="cap">Noch nicht mit Spotify verbunden.</p>
               <button className="pill glass hot" onClick={() => setTab('settings')}>Zu den Einstellungen</button></div>)}
         {tab === 'settings' && <Settings loggedIn={!!loggedIn} onError={setError} onAiSaved={sync}
@@ -115,7 +120,7 @@ export function App() {
         <span className="ind" />
         <TabBtn on={tab === 'search'} onClick={() => setTab('search')} label="Suche"
           icon={<><circle cx="11" cy="11" r="6.5" /><path d="M16 16l4.5 4.5" /></>} />
-        <TabBtn on={tab === 'playlists'} onClick={() => setTab('playlists')} label="Playlists"
+        <TabBtn on={tab === 'playlists'} onClick={() => { setTab('playlists'); setOpenId(null) }} label="Playlists"
           icon={<path d="M4 6h12M4 12h12M4 18h8M18 16v-9l3-1" />} />
         <TabBtn on={tab === 'settings'} onClick={() => setTab('settings')} label="Einstellungen"
           icon={<><path d="M4 8h9M17 8h3M4 16h3M11 16h9" /><circle cx="15" cy="8" r="2" /><circle cx="9" cy="16" r="2" /></>} />
@@ -135,17 +140,17 @@ function TabBtn(p: { on: boolean; onClick: () => void; label: string; icon: Reac
     <svg viewBox="0 0 24 24">{p.icon}</svg>{p.label}</button>
 }
 
-function Playlists({ items, profiles }: { items: Playlist[]; profiles: Map<string, Profile> }) {
+function Playlists({ items, profiles, onOpen }: { items: Playlist[]; profiles: Map<string, Profile>; onOpen: (id: string) => void }) {
   return <ul className="list">
     {items.map(p => {
       const pr = profiles.get(p.id)
-      return <li key={p.id} className="row glass">
+      return <li key={p.id}><button className="row glass" onClick={() => onOpen(p.id)}>
         {p.image ? <img src={p.image} alt="" loading="lazy" /> : <span className="ph" />}
         <span className="meta"><b>{p.name}</b>
           <small>{p.total} Songs · {p.ownedByMe ? 'eigene' : p.owner}{p.tracksBlocked ? ' · Tracks gesperrt' : ''}</small>
           {pr && <small className="prof">{[pr.genres.slice(0, 2).join(', '), pr.era, pr.mood].filter(Boolean).join(' · ')}</small>}
         </span>
-      </li>
+      </button></li>
     })}
   </ul>
 }
