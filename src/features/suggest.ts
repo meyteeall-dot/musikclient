@@ -46,8 +46,20 @@ function sample(song: Track, tracks: Track[], n: number) {
 const SYSTEM = 'Du ordnest Songs den passenden Playlists eines Nutzers zu. Der Nutzer sortiert sehr genau nach Klang, Stimmung, Genre und Epoche. Antworte ausschließlich mit JSON.'
 const songLine = (s: Track) => `${s.name} – ${s.artists.join(', ')}${s.year ? ` (${s.year})` : ''}, Album „${s.album}“`
 
-/** test: Trefferquote – der Song wird aus seinen eigenen Playlists herausgerechnet, als wäre er neu. */
-export async function suggest(song: Track, opts: { test?: boolean } = {}): Promise<SuggestResult> {
+// Gleicher Song erneut geöffnet (zurück/vor, Inbox): Ergebnis wiederverwenden statt neu fragen; Hinzufügen/Ablehnen leert es
+const cache = new Map<string, { at: number; res: SuggestResult }>()
+const CACHE_MS = 15 * 60_000
+
+/** test: Trefferquote – Song aus seinen Playlists herausgerechnet. local: nur lokale Punkte, keine KI (Vergleichswert). */
+export async function suggest(song: Track, opts: { test?: boolean; local?: boolean } = {}): Promise<SuggestResult> {
+  const hit = !opts.test && cache.get(song.id)
+  if (hit && Date.now() - hit.at < CACHE_MS) return hit.res
+  const res = await compute(song, opts)
+  if (!opts.test) cache.set(song.id, { at: Date.now(), res })
+  return res
+}
+
+async function compute(song: Track, opts: { test?: boolean; local?: boolean }): Promise<SuggestResult> {
   const d = await db
   const [all, profiles, allChoices, excluded] = await Promise.all([d.getAll('playlists'), d.getAll('profiles'), d.getAll('choices'), getExcluded()])
   const choices = opts.test ? allChoices.filter(c => c.trackId !== song.id) : allChoices
@@ -66,16 +78,17 @@ export async function suggest(song: Track, opts: { test?: boolean } = {}): Promi
   cands.sort((a, b) => b.score - a.score)
 
   let picks: Suggestion[] = [], provider = 'lokal'
-  if (cands.length > 3 && await hasAi()) {
+  if (cands.length > 3 && !opts.local && await hasAi()) try {
     // Stufe 1: aus allen Playlists (Kurzprofil) die engere Wahl, ergänzt um die lokal stärksten
     let short = cands.slice(0, SHORTLIST)
     if (cands.length > SHORTLIST) {
       const lines = cands.map((c, i) => JSON.stringify({
-        i, n: c.p.name, g: c.prof?.genres.join(', '), e: c.prof?.era, m: c.prof?.mood, ...(c.k ? { k: c.k } : {}), ...(c.w ? { w: c.w } : {}),
+        i, n: c.p.name, g: c.prof?.genres.join(', '), e: c.prof?.era, m: c.prof?.mood, a: c.prof?.artists.slice(0, 5).join(', '),
+        ...(c.k ? { k: c.k } : {}), ...(c.w ? { w: c.w } : {}),
       })).join('\n')
       const r1 = await completeJson<{ top: number[] }>({ system: SYSTEM, prompt: `Song: ${songLine(song)}
 Wähle die ${SHORTLIST} Playlists, in die dieser Song am ehesten passen könnte, beste zuerst.
-Felder: i = Nummer, n = Name, g = Genres, e = Epoche, m = Stimmung, k = Songs desselben Künstlers schon drin, w = wie oft ich diesen Künstler schon dorthin gelegt habe.
+Felder: i = Nummer, n = Name, g = Genres, e = Epoche, m = Stimmung, a = Hauptkünstler, k = Songs desselben Künstlers schon drin, w = wie oft ich diesen Künstler schon dorthin gelegt habe.
 Format: {"top":[0,1,…]}
 
 Playlists:
@@ -98,6 +111,10 @@ ${blocks}` })
       seen.add(s.i); picks.push({ playlist: short[s.i].p, reason: String(s.reason ?? '') })
     }
     picks = picks.slice(0, 3)
+  } catch (e) {
+    // KI nicht erreichbar oder Unsinn geantwortet: lieber lokale Vorschläge als gar keine
+    console.warn('KI-Vorschlag fehlgeschlagen, nutze lokale Punkte:', e)
+    picks = []; provider = 'lokal (KI nicht erreichbar)'
   }
   // Auffüllen (ohne KI oder bei lückenhafter Antwort) mit den lokal besten
   for (const c of cands) {
@@ -117,6 +134,7 @@ function localReason(song: Track, c: Cand) {
 
 /** Song hinzufügen und die Wahl fürs Lernen merken. */
 export async function choose(song: Track, playlist: Playlist, suggested: string[]) {
+  cache.clear()
   await addToPlaylist(playlist.id, song.uri)
   const d = await db
   await d.add('choices', { trackId: song.id, artistIds: song.artistIds, playlistId: playlist.id, suggested, at: Date.now() })
@@ -127,5 +145,6 @@ export async function choose(song: Track, playlist: Playlist, suggested: string[
 
 /** „Auf keinen Fall": diese Playlist für diesen Song nie wieder, für denselben Künstler deutlich seltener. */
 export async function reject(song: Track, playlist: Playlist) {
+  cache.clear()
   await (await db).add('choices', { trackId: song.id, artistIds: song.artistIds, playlistId: playlist.id, suggested: [], at: Date.now(), rejected: true })
 }

@@ -39,6 +39,7 @@ function AccuracyPanel({ onError }: { onError: (m: string) => void }) {
       <div><b>{pct(res.top1, res.n)}</b><small>auf Platz 1</small></div>
       <div><b>{pct(res.top3, res.n)}</b><small>unter den Top 3</small></div>
     </div>}
+    {res?.local && <p className="cap left">Ohne KI wären es {pct(res.local.top1, res.n)} auf Platz 1 und {pct(res.local.top3, res.n)} in den Top 3.</p>}
     {res && <p className="cap left">{res.n} Songs · {res.provider} · {new Date(res.at).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' })}</p>}
     {!!res?.misses.length && <details className="misses"><summary>Daneben ({res.misses.length})</summary>
       <ul>{res.misses.map((m, i) => <li key={i}><b>{m.song}</b><small>gehört in: {m.expected.join(', ')}</small><small>vorgeschlagen: {m.got.join(', ')}</small></li>)}</ul>

@@ -40,6 +40,8 @@ export interface Profile {
   era: string
   summary: string
   provider: string
+  /** Anzahl Songs beim letzten KI-Profil: kleine Änderungen werden ohne KI nachgeführt */
+  n?: number
 }
 
 /** Eine Entscheidung: Song in Playlist gelegt. Grundlage fürs Lernen. */

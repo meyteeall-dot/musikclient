@@ -50,6 +50,9 @@ function tick(now: number) {
   requestAnimationFrame(tick)
 }
 
+const radii = new WeakMap<Element, number>()   // getComputedStyle pro Bild und Cover wäre am iPad spürbar
+const radiusOf = (el: Element) => { let r = radii.get(el); if (r == null) radii.set(el, r = parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0); return r }
+
 const RM = matchMedia('(prefers-reduced-motion: reduce)').matches
 const FIXED = '[data-fixed], .gs-track'   // verformbar, aber wandert nicht mit dem Finger
 const BIG = '[data-big]'                  // große Flächen: Spur hinter dem Finger statt Dehnen
@@ -250,7 +253,7 @@ export function initGlass(cv: HTMLCanvasElement) {
       const glass = el.closest<HTMLElement>('.glass'), a = glass ? lensOf(glass).a : 1   // blendet mit seinem Glas ein
       gl!.bindTexture(gl!.TEXTURE_2D, e.t)
       gl!.uniform4f(UC.uR, (r.left + r.width / 2) * dpr, (r.top + r.height / 2) * dpr, r.width / 2 * dpr, r.height / 2 * dpr)
-      gl!.uniform1f(UC.uRad, (parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0) * dpr)
+      gl!.uniform1f(UC.uRad, radiusOf(el) * dpr)
       gl!.uniform2f(UC.uScale, img > box ? box / img : 1, img > box ? 1 : img / box)
       gl!.uniform4f(UC.uClip, c ? c.left * dpr : -1e5, c ? c.top * dpr : -1e5, c ? c.right * dpr : 1e5, c ? c.bottom * dpr : 1e5)
       gl!.uniform1f(UC.uA, a * a * (3 - 2 * a))
@@ -295,7 +298,7 @@ export function initGlass(cv: HTMLCanvasElement) {
       if (cov) {
         const q = cov.getBoundingClientRect()
         gl!.uniform4f(U.uCov, (q.left + q.width / 2) * dpr, (q.top + q.height / 2) * dpr, q.width / 2 * dpr, q.height / 2 * dpr)
-        gl!.uniform1f(U.uCovR, (parseFloat(getComputedStyle(cov).borderTopLeftRadius) || 0) * dpr)
+        gl!.uniform1f(U.uCovR, radiusOf(cov) * dpr)
       } else gl!.uniform4f(U.uCov, 0, 0, 0, 0)
       gl!.uniform4f(U.uR, cx * dpr, cy * dpr, hw * dpr, hh * dpr)
       gl!.uniform3f(U.uP, rad * dpr, bev * dpr, a)

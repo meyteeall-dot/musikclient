@@ -18,6 +18,13 @@ function localStats(tracks: Track[]) {
   return { artists, years, examples }
 }
 
+/** Kleine Änderung: höchstens 10 % (mind. 3) Songs Unterschied und die 5 Hauptkünstler im Kern gleich. */
+function small(old: Profile, tracks: Track[]) {
+  if (Math.abs(tracks.length - old.n!) > Math.max(3, old.n! * .1)) return false
+  const now = new Set(localStats(tracks).artists.slice(0, 5))
+  return old.artists.slice(0, 5).filter(a => now.has(a)).length >= 4
+}
+
 const SYSTEM = 'Du analysierst Spotify-Playlists und erstellst kompakte Profile, mit denen man später neue Songs der passenden Playlist zuordnet. Antworte ausschließlich mit JSON.'
 const TASK = `Erstelle für jede Playlist ein Profil:
 - genres: 2–5 konkrete Genres/Subgenres (übliche englische Bezeichnungen)
@@ -35,7 +42,19 @@ export async function buildProfiles(onProgress?: (done: number, todo: number) =>
   const d = await db
   const profiles = new Map((await d.getAll('profiles')).map(p => [p.id, p]))
   const excluded = new Set((await kv.get<string[]>('excluded')) ?? [])   // ignorierte Playlists brauchen kein Profil
-  const todo = (await d.getAll('playlists')).filter(p => p.tracksSnapshot && !excluded.has(p.id) && profiles.get(p.id)?.basedOn !== `${VERSION}:${p.tracksSnapshot}`)
+  const todo: Playlist[] = []
+  for (const p of await d.getAll('playlists')) {
+    if (!p.tracksSnapshot || excluded.has(p.id)) continue
+    const old = profiles.get(p.id), basedOn = `${VERSION}:${p.tracksSnapshot}`
+    if (old?.basedOn === basedOn) continue
+    const tracks = (await d.get('tracks', p.id))?.tracks ?? []
+    if (old?.n && old.basedOn.startsWith(`${VERSION}:`) && small(old, tracks)) {
+      // Ein paar Songs mehr oder weniger ändern Genre und Stimmung nicht: Zahlen lokal nachführen, keine KI-Anfrage
+      await d.put('profiles', { ...old, ...localStats(tracks), basedOn })
+      continue
+    }
+    todo.push(p)
+  }
   const batches: Playlist[][] = []
   for (let i = 0; i < todo.length; i += BATCH) batches.push(todo.slice(i, i + BATCH))
 
@@ -52,7 +71,7 @@ export async function buildProfiles(onProgress?: (done: number, todo: number) =>
       const x = byId.get(p.id)
       if (!x) continue   // fehlt in der Antwort: beim nächsten Abgleich erneut
       await d.put('profiles', {
-        id: p.id, basedOn: `${VERSION}:${p.tracksSnapshot}`, ...stats, provider,
+        id: p.id, basedOn: `${VERSION}:${p.tracksSnapshot}`, ...stats, provider, n: (await d.get('tracks', p.id))?.tracks.length ?? 0,
         genres: Array.isArray(x.genres) ? x.genres.map(String).slice(0, 5) : [],
         mood: String(x.mood ?? ''), era: String(x.era ?? ''), summary: String(x.summary ?? ''),
       })
