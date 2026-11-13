@@ -13,8 +13,8 @@ export default defineConfig({
         name: 'Musikclient',
         short_name: 'Musik',
         description: 'Persönlicher Musik-Client auf Spotify-Basis',
-        theme_color: '#060b1a',
-        background_color: '#060b1a',
+        theme_color: '#050912',
+        background_color: '#050912',
         display: 'standalone',
         icons: [
           { src: 'icon-192.png', sizes: '192x192', type: 'image/png' },

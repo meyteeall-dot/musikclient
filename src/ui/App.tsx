@@ -3,8 +3,10 @@ import { db, kv, type Playlist } from '../data/db'
 import { syncPlaylists } from '../data/sync'
 import { NotLoggedIn } from '../spotify/api'
 import { accessToken, handleRedirect, login, logout, redirectUri } from '../spotify/auth'
+import { applyGlass, applyTheme, GLASS_DEFAULTS, GLASS_SLIDERS, THEMES, type GlassValues, type ThemeId } from './glass/engine'
 
 type Tab = 'playlists' | 'settings'
+const TABS: Tab[] = ['playlists', 'settings']
 const SYNC_EVERY = 15 * 60 * 1000
 
 export function App() {
@@ -12,21 +14,22 @@ export function App() {
   const [loggedIn, setLoggedIn] = useState<boolean | null>(null)
   const [playlists, setPlaylists] = useState<Playlist[]>([])
   const [status, setStatus] = useState('')
+  const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
   const load = async () => setPlaylists((await (await db).getAll('playlists')).sort((a, b) => a.name.localeCompare(b.name)))
 
   const sync = useCallback(async () => {
-    setStatus('Gleiche Playlists ab …')
+    setBusy(true)
     try {
       const r = await syncPlaylists()
-      setStatus(`${r.total} Playlists · ${r.added} neu · ${r.changed} geändert · ${r.removed} entfernt`)
+      setStatus(r.added + r.changed + r.removed ? `${r.added} neu · ${r.changed} geändert · ${r.removed} weg` : 'aktuell')
       await load()
     } catch (e) {
       if (e instanceof NotLoggedIn) setLoggedIn(false)
       else setError(String((e as Error).message))
-      setStatus('')
     }
+    setBusy(false)
   }, [])
 
   useEffect(() => {
@@ -57,27 +60,35 @@ export function App() {
     <div className="app">
       <header className="top">
         <div className="brand"><span className="dot" /><span className="word">Musik<i>·</i>client</span></div>
-        {loggedIn && <button className="iconbtn" aria-label="Jetzt abgleichen" onClick={sync}>
-          <svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5" /></svg>
-        </button>}
+        <div className="tools">
+          {loggedIn && <button className={'iconbtn glass' + (busy ? ' spin' : '')} aria-label="Jetzt abgleichen" onClick={sync}>
+            <svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5" /></svg>
+          </button>}
+        </div>
       </header>
 
-      {error && <div className="panel error" onClick={() => setError('')}>{error}</div>}
+      <div className="readout glass" aria-live="polite">
+        <div><span className="k">Bibliothek</span><span className="n">{busy ? 'Abgleich …' : `${playlists.length} Playlists`}</span></div>
+        <span className="v">{loggedIn ? status : 'nicht verbunden'}</span>
+      </div>
 
-      <main className="stage">
+      {error && <div className="panel glass error" onClick={() => setError('')}>{error}</div>}
+
+      <main className="scroll" key={tab}>
         {tab === 'playlists' && (loggedIn
-          ? <Playlists items={playlists} status={status} />
-          : <div className="panel center"><p className="cap">Noch nicht mit Spotify verbunden.</p>
-              <button className="pill hot" onClick={() => setTab('settings')}>Zu den Einstellungen</button></div>)}
+          ? <Playlists items={playlists} />
+          : <div className="panel glass center"><p className="cap">Noch nicht mit Spotify verbunden.</p>
+              <button className="pill glass hot" onClick={() => setTab('settings')}>Zu den Einstellungen</button></div>)}
         {tab === 'settings' && <Settings loggedIn={!!loggedIn} onError={setError}
           onLogout={async () => { await logout(); setLoggedIn(false) }} />}
       </main>
 
-      <nav className="tabs" role="tablist">
+      <nav className="tabs glass" role="tablist" style={{ '--n': TABS.length, '--i': TABS.indexOf(tab) } as React.CSSProperties}>
+        <span className="ind" />
         <TabBtn on={tab === 'playlists'} onClick={() => setTab('playlists')} label="Playlists"
           icon={<path d="M4 6h12M4 12h12M4 18h8M18 16v-9l3-1" />} />
         <TabBtn on={tab === 'settings'} onClick={() => setTab('settings')} label="Einstellungen"
-          icon={<><circle cx="12" cy="12" r="3" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1" /></>} />
+          icon={<><path d="M4 8h9M17 8h3M4 16h3M11 16h9" /><circle cx="15" cy="8" r="2" /><circle cx="9" cy="16" r="2" /></>} />
       </nav>
     </div>
   )
@@ -88,16 +99,13 @@ function TabBtn(p: { on: boolean; onClick: () => void; label: string; icon: Reac
     <svg viewBox="0 0 24 24">{p.icon}</svg>{p.label}</button>
 }
 
-function Playlists({ items, status }: { items: Playlist[]; status: string }) {
-  return <>
-    <div className="readout"><span className="k">Bibliothek</span><span className="v">{status || `${items.length} Playlists`}</span></div>
-    <ul className="list">
-      {items.map(p => <li key={p.id} className="row">
-        {p.image ? <img src={p.image} alt="" loading="lazy" /> : <span className="ph" />}
-        <span className="meta"><b>{p.name}</b><small>{p.total} Songs · {p.ownedByMe ? 'eigene' : p.owner}</small></span>
-      </li>)}
-    </ul>
-  </>
+function Playlists({ items }: { items: Playlist[] }) {
+  return <ul className="list">
+    {items.map(p => <li key={p.id} className="row glass">
+      {p.image ? <img src={p.image} alt="" loading="lazy" /> : <span className="ph" />}
+      <span className="meta"><b>{p.name}</b><small>{p.total} Songs · {p.ownedByMe ? 'eigene' : p.owner}</small></span>
+    </li>)}
+  </ul>
 }
 
 function Settings(p: { loggedIn: boolean; onLogout: () => void; onError: (m: string) => void }) {
@@ -110,7 +118,7 @@ function Settings(p: { loggedIn: boolean; onLogout: () => void; onError: (m: str
   const copy = async () => { await navigator.clipboard.writeText(redirectUri()); setCopied(true); setTimeout(() => setCopied(false), 1500) }
 
   return <div className="panels">
-    <section className="panel">
+    <section className="panel glass">
       <h2>Spotify</h2>
       <label className="k">Redirect-URI (ins Dashboard eintragen)</label>
       <button className="field mono" onClick={copy}>{copied ? 'Kopiert ✓' : redirectUri()}</button>
@@ -118,12 +126,40 @@ function Settings(p: { loggedIn: boolean; onLogout: () => void; onError: (m: str
       <input id="cid" className="field mono" value={clientId} onChange={e => setClientId(e.target.value)}
         placeholder="aus dem Spotify Dashboard einfügen" autoCapitalize="off" autoCorrect="off" spellCheck={false} />
       <div className="actions">
-        <button className="pill" onClick={save}>{saved ? 'Gespeichert ✓' : 'Speichern'}</button>
+        <button className="pill glass" onClick={save}>{saved ? 'Gespeichert ✓' : 'Speichern'}</button>
         {p.loggedIn
-          ? <button className="pill" onClick={p.onLogout}>Abmelden</button>
-          : <button className="pill hot" onClick={async () => { await save(); login().catch(e => p.onError(e.message)) }}>Mit Spotify anmelden</button>}
+          ? <button className="pill glass" onClick={p.onLogout}>Abmelden</button>
+          : <button className="pill glass hot" onClick={async () => { await save(); login().catch(e => p.onError(e.message)) }}>Mit Spotify anmelden</button>}
       </div>
     </section>
+    <Look />
     <p className="cap">Alle Daten und Schlüssel bleiben nur auf diesem Gerät gespeichert.</p>
   </div>
+}
+
+/** Farbwelt und Glas-Regler aus Druckpunkt; lokal gespeichert. */
+function Look() {
+  const [theme, setTheme] = useState<ThemeId>((document.body.dataset.theme as ThemeId) || 'color')
+  const [glass, setGlass] = useState<GlassValues>(GLASS_DEFAULTS)
+  useEffect(() => { kv.get<GlassValues>('glass').then(v => v && setGlass({ ...GLASS_DEFAULTS, ...v })) }, [])
+  const pickTheme = (t: ThemeId) => { setTheme(t); applyTheme(t); kv.set('theme', t) }
+  const change = (g: GlassValues) => { setGlass(g); applyGlass(g); kv.set('glass', g) }
+
+  return <section className="panel glass">
+    <h2>Aussehen</h2>
+    <span className="k">Farbwelt · {THEMES[theme].name}</span>
+    <div className="swatches" role="radiogroup" aria-label="Farbwelt">
+      {(Object.keys(THEMES) as ThemeId[]).map(id => <button key={id} className="swatch" role="radio" aria-checked={id === theme}
+        aria-label={THEMES[id].name} style={{ background: THEMES[id].sw }} onClick={() => pickTheme(id)} />)}
+    </div>
+    {GLASS_SLIDERS.map(s => <div className="gs" key={s.k}>
+      <div className="gs-head"><span>{s.name}</span><b>{glass[s.k]} %</b></div>
+      <div className="gs-track glass" style={{ '--v': glass[s.k] / 100 } as React.CSSProperties}>
+        <span className="gs-fill" /><span className="gs-thumb glass" />
+        <input type="range" min={0} max={100} value={glass[s.k]} aria-label={s.name}
+          onChange={e => change({ ...glass, [s.k]: +e.target.value })} />
+      </div>
+    </div>)}
+    <div className="actions"><button className="pill glass" onClick={() => change(GLASS_DEFAULTS)}>Glas zurücksetzen</button></div>
+  </section>
 }
