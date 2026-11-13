@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { lastAccuracy, measureAccuracy, type Accuracy } from '../features/accuracy'
 import { doneInbox, loadInbox } from '../features/inbox'
+import { buildMix, createMix, type Mix } from '../features/mix'
 import { findDuplicates, type Dupe } from '../features/tools'
 import type { SearchHit } from '../spotify/api'
 import { CoverRow } from './Cover'
@@ -13,6 +14,7 @@ export function Tools({ onError, onAdded }: { onError: (m: string) => void; onAd
     onBack={() => setSong(null)} onAdded={() => { doneInbox(song.id); inboxCache = inboxCache?.filter(x => x.id !== song.id) ?? null; onAdded() }} />
   return <div className="panels">
     <InboxPanel onError={onError} onPick={setSong} />
+    <MixPanel onError={onError} />
     <AccuracyPanel onError={onError} />
     <DupesPanel />
   </div>
@@ -76,5 +78,35 @@ function InboxPanel({ onError, onPick }: { onError: (m: string) => void; onPick:
       <button className="never" aria-label="Überspringen" title="Überspringen" onClick={() => skip(h)}>✕</button>
     </li>)}</ul>}
     <div className="actions"><button className="pill glass hot" disabled={busy} onClick={load}>{busy ? 'Lade …' : list ? 'Neu laden' : 'Inbox laden'}</button></div>
+  </section>
+}
+
+function MixPanel({ onError }: { onError: (m: string) => void }) {
+  const [words, setWords] = useState('')
+  const [count, setCount] = useState(30)
+  const [mix, setMix] = useState<Mix | null>(null)
+  const [busy, setBusy] = useState<'build' | 'create' | null>(null)
+  const [url, setUrl] = useState<string | null>(null)
+  const build = () => { setBusy('build'); setUrl(null); buildMix(words.trim(), count).then(setMix, e => onError(e.message)).finally(() => setBusy(null)) }
+  const create = () => { setBusy('create'); createMix(mix!).then(setUrl, e => onError(e.message)).finally(() => setBusy(null)) }
+  return <section className="panel glass">
+    <h2>KI-Playlist</h2>
+    <p className="cap left">Ein paar Worte, z. B. „ruhig, Nacht, 2010er“ – die KI stellt aus deinen eigenen Songs eine Playlist in guter Reihenfolge zusammen.</p>
+    <input className="field" value={words} onChange={e => setWords(e.target.value)} placeholder="Stimmung, Anlass, Genre …" enterKeyHint="go"
+      onKeyDown={e => e.key === 'Enter' && words.trim() && build()} />
+    <div className="actions">
+      {[20, 30, 50].map(n => <button key={n} className={'pill glass' + (count === n ? ' hot' : '')} onClick={() => setCount(n)}>{n} Songs</button>)}
+    </div>
+    <div className="actions"><button className="pill glass hot" disabled={!words.trim() || !!busy} onClick={build}>
+      {busy === 'build' ? 'Stelle zusammen …' : mix ? 'Neu zusammenstellen' : 'Zusammenstellen'}</button></div>
+    {mix && <>
+      <b className="mix-name">{mix.name}</b>
+      {mix.description && <p className="cap left">{mix.description}</p>}
+      <ol className="mix">{mix.tracks.map((t, i) => <li key={t.id}><span className="nr">{i + 1}</span>{t.artists[0]} – {t.name}</li>)}</ol>
+      <div className="actions">
+        {url ? <a className="pill glass hot" href={url} target="_blank" rel="noreferrer">In Spotify öffnen ↗</a>
+          : <button className="pill glass hot" disabled={!!busy} onClick={create}>{busy === 'create' ? 'Lege an …' : 'In Spotify anlegen'}</button>}
+      </div>
+    </>}
   </section>
 }
