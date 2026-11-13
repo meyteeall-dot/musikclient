@@ -62,12 +62,13 @@ export function App() {
 
   useEffect(() => {
     (async () => {
-      try { await handleRedirect() } catch (e) { setError((e as Error).message) }
+      let fresh = false
+      try { fresh = await handleRedirect() } catch (e) { setError((e as Error).message) }
       await load()
       const ok = !!(await accessToken())
       setLoggedIn(ok)
       // Neuladen allein kostet keine Spotify-Anfragen: nur abgleichen, wenn der letzte Abgleich alt ist
-      if (ok && Date.now() - ((await kv.get<number>('lastSync')) ?? 0) > SYNC_EVERY) sync()
+      if (ok && (fresh || Date.now() - ((await kv.get<number>('lastSync')) ?? 0) > SYNC_EVERY)) sync()
       else setTab('settings')
     })()
   }, [sync])
