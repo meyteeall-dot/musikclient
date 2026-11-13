@@ -4,15 +4,17 @@ import { syncPlaylists, syncTracks } from '../data/sync'
 import { AI_DEFAULTS, hasAi } from '../ai'
 import { buildProfiles } from '../features/profiles'
 import { clearPause, NotLoggedIn, RateLimited } from '../spotify/api'
+import { startWebPlayer } from '../spotify/player'
 import { accessToken, handleRedirect, login, logout, redirectUri } from '../spotify/auth'
 import { glassScroll } from './glass/scroll'
 import { CoverRow } from './Cover'
+import { Player } from './Player'
 import { PlaylistView } from './PlaylistView'
 import { Search } from './Search'
 import { applyGlass, applyTheme, GLASS_DEFAULTS, GLASS_SLIDERS, THEMES, type GlassValues, type ThemeId } from './glass/engine'
 
-type Tab = 'search' | 'playlists' | 'settings'
-const TABS: Tab[] = ['search', 'playlists', 'settings']
+type Tab = 'search' | 'playlists' | 'player' | 'settings'
+const TABS: Tab[] = ['search', 'playlists', 'player', 'settings']
 const SYNC_EVERY = 15 * 60 * 1000
 
 export function App() {
@@ -67,6 +69,7 @@ export function App() {
       await load()
       const ok = !!(await accessToken())
       setLoggedIn(ok)
+      if (ok) startWebPlayer()   // PC: Browser wird zum Spotify-Gerät
       // Neuladen allein kostet keine Spotify-Anfragen: nur abgleichen, wenn der letzte Abgleich alt ist
       if (ok && (fresh || Date.now() - ((await kv.get<number>('lastSync')) ?? 0) > SYNC_EVERY)) sync()
       else setTab('settings')
@@ -112,10 +115,11 @@ export function App() {
           : <div className="panel glass center"><p className="cap">Noch nicht mit Spotify verbunden.</p>
               <button className="pill glass hot" onClick={() => setTab('settings')}>Zu den Einstellungen</button></div>)}
         {tab === 'playlists' && (loggedIn
-          ? (open ? <PlaylistView p={open} profile={profiles.get(open.id)} onBack={() => setOpenId(null)} />
+          ? (open ? <PlaylistView p={open} profile={profiles.get(open.id)} onBack={() => setOpenId(null)} onError={setError} />
             : <Playlists items={playlists} profiles={profiles} onOpen={setOpenId} />)
           : <div className="panel glass center"><p className="cap">Noch nicht mit Spotify verbunden.</p>
               <button className="pill glass hot" onClick={() => setTab('settings')}>Zu den Einstellungen</button></div>)}
+        {tab === 'player' && <Player onError={setError} />}
         {tab === 'settings' && <Settings loggedIn={!!loggedIn} onError={setError} onAiSaved={sync}
           onLogout={async () => { await logout(); setLoggedIn(false) }} />}
       </Scroll>
@@ -134,6 +138,7 @@ function Scroll({ children }: { children: React.ReactNode }) {
 const TAB_UI: Record<Tab, [string, React.ReactNode]> = {
   search: ['Suche', <><circle cx="11" cy="11" r="6.5" /><path d="M16 16l4.5 4.5" /></>],
   playlists: ['Playlists', <path d="M4 6h12M4 12h12M4 18h8M18 16v-9l3-1" />],
+  player: ['Player', <><circle cx="12" cy="12" r="8.5" /><path d="M10 8.5v7l5.5-3.5z" /></>],
   settings: ['Einstellungen', <><path d="M4 8h9M17 8h3M4 16h3M11 16h9" /><circle cx="15" cy="8" r="2" /><circle cx="9" cy="16" r="2" /></>],
 }
 

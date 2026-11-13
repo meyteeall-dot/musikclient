@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { choose, suggest, type SuggestResult } from '../features/suggest'
 import { searchTracks, type SearchHit } from '../spotify/api'
+import { play } from '../spotify/player'
 import { Cover, CoverRow } from './Cover'
 
 /** Song suchen → 3 Playlist-Vorschläge mit Begründung → Hinzufügen. */
@@ -32,6 +33,7 @@ export function Search({ onError, onAdded }: { onError: (m: string) => void; onA
 
   if (song) return <div className="panels">
     <CoverRow image={song.image} title={song.name} sub={`${song.artists.join(', ')}${song.year ? ` · ${song.year}` : ''}`} />
+    <div className="actions center"><button className="pill glass" onClick={() => play({ uris: [song.uri] }).catch(e => onError(e.message))}>▶ Abspielen</button></div>
     {!res && <p className="cap">Suche passende Playlists …</p>}
     {res?.suggestions.map((s, i) => <Sugg key={s.playlist.id} image={s.playlist.image} name={s.playlist.name} reason={s.reason}
       state={added[s.playlist.id]} onAdd={() => add(i)} />)}

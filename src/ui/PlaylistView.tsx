@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { db, type Playlist, type Profile, type Track } from '../data/db'
+import { play } from '../spotify/player'
 import { CoverRow } from './Cover'
 
 /** Inhalt einer Playlist in Spotify-Reihenfolge, aus der lokalen Datenbank (sofort, auch offline). */
-export function PlaylistView({ p, profile, onBack }: { p: Playlist; profile?: Profile; onBack: () => void }) {
+export function PlaylistView({ p, profile, onBack, onError }: { p: Playlist; profile?: Profile; onBack: () => void; onError: (m: string) => void }) {
   const [tracks, setTracks] = useState<Track[] | null>(null)
   useEffect(() => { db.then(d => d.get('tracks', p.id)).then(t => setTracks(t?.tracks ?? [])) }, [p.id])
   const missing = tracks ? p.total - tracks.length : 0
@@ -16,10 +17,11 @@ export function PlaylistView({ p, profile, onBack }: { p: Playlist; profile?: Pr
     {p.tracksBlocked && <p className="cap">Spotify gibt die Songs dieser Playlist nicht heraus (fremde Playlist im Entwicklungsmodus).</p>}
     {!!tracks?.length && <section className="panel glass tracks" data-fixed>
       <ol>
-        {tracks.map((t, i) => <li key={i}>
+        {tracks.map((t, i) => <li key={i}><button onClick={() =>   // antippen: Playlist ab diesem Song abspielen
+          play({ context_uri: `spotify:playlist:${p.id}`, offset: { uri: t.uri } }).catch(e => onError(e.message))}>
           <span className="nr">{i + 1}</span>
           <span className="meta"><b>{t.name}</b><small>{t.artists.join(', ')} · {t.album}{t.year ? ` · ${t.year}` : ''}</small></span>
-        </li>)}
+        </button></li>)}
       </ol>
     </section>}
     {missing > 0 && !p.tracksBlocked && <p className="cap">{missing === 1 ? 'Ein Eintrag wird' : `${missing} Einträge werden`} nicht angezeigt (lokale Dateien oder Podcast-Folgen).</p>}
