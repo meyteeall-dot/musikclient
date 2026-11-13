@@ -182,7 +182,7 @@ function Playlists({ items, profiles, onOpen }: { items: Playlist[]; profiles: M
     {items.map(p => {
       const pr = profiles.get(p.id)
       return <li key={p.id}><CoverRow image={p.image} title={p.name} onClick={() => onOpen(p.id)}
-        sub={`${p.total} Songs · ${p.ownedByMe ? 'eigene' : p.owner}${p.tracksBlocked ? ' · Tracks gesperrt' : ''}`}
+        sub={`${p.total} Songs · ${p.ownedByMe ? 'eigene' : p.owner}${p.tracksBlocked ? ' · Tracks gesperrt' : p.tracksSnapshot ? '' : ' · wird noch eingelesen'}`}
         extra={pr && <small className="prof">{[pr.genres.slice(0, 2).join(', '), pr.era, pr.mood].filter(Boolean).join(' · ')}</small>} /></li>
     })}
   </ul>

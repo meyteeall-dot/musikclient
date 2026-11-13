@@ -12,6 +12,7 @@ export function PlaylistView({ p, profile, onBack }: { p: Playlist; profile?: Pr
     <CoverRow image={p.image} title={p.name} sub={`${p.total} Songs · ${p.ownedByMe ? 'eigene' : p.owner}`}
       extra={profile && <small className="prof">{[profile.genres.join(', '), profile.era, profile.mood].filter(Boolean).join(' · ')}</small>} />
     {profile?.summary && <p className="cap">{profile.summary}</p>}
+    {!p.tracksSnapshot && <p className="cap">Songs noch nicht eingelesen – das passiert beim nächsten Abgleich, sobald Spotify es zulässt.</p>}
     {p.tracksBlocked && <p className="cap">Spotify gibt die Songs dieser Playlist nicht heraus (fremde Playlist im Entwicklungsmodus).</p>}
     {!!tracks?.length && <section className="panel glass tracks" data-fixed>
       <ol>

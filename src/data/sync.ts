@@ -67,6 +67,7 @@ export async function syncTracks(onProgress?: (done: number, todo: number) => vo
   let done = 0
   for (const p of todo) {
     onProgress?.(done, todo.length)
+    if (done) await new Promise(r => setTimeout(r, 400))   // keine Anfrage-Salven: Spotify sperrt sonst die App
     try {
       const raw = await getAll<any>(`/playlists/${p.id}/items?limit=50&fields=${encodeURIComponent(FIELDS)}`)
       const tracks: Track[] = []
