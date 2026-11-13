@@ -133,6 +133,8 @@ svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.7;stroke
 .row .meta{min-width:0;display:flex;flex-direction:column;gap:2px}
 .row b{font-weight:700;font-size:14.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .row small{color:var(--muted);font-size:12px}
+.row small.prof,.gl .row small.prof{color:var(--accent-hot);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kfield{display:flex;flex-direction:column;gap:6px}
 
 /* ---------- Tabbar: gleitende Glas-Linse ---------- */
 .tabs{display:grid;grid-template-columns:repeat(var(--n),1fr);gap:4px;padding:6px;border-radius:32px}

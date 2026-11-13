@@ -37,7 +37,7 @@ export async function syncPlaylists(): Promise<SyncResult> {
   }
   await tx.done
   for (const id of local.keys()) {   // gelöscht oder entfolgt: Playlist samt Tracks entfernen
-    await d.delete('playlists', id); await d.delete('tracks', id); res.removed++
+    await d.delete('playlists', id); await d.delete('tracks', id); await d.delete('profiles', id); res.removed++
   }
   await kv.set('lastSync', Date.now())
   return res

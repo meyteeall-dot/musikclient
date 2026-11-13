@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { db, kv, type Playlist } from '../data/db'
+import { db, kv, type Playlist, type Profile } from '../data/db'
 import { syncPlaylists, syncTracks } from '../data/sync'
+import { AI_DEFAULTS, hasAi } from '../ai'
+import { buildProfiles } from '../features/profiles'
 import { NotLoggedIn } from '../spotify/api'
 import { accessToken, handleRedirect, login, logout, redirectUri } from '../spotify/auth'
 import { glassScroll } from './glass/scroll'
@@ -14,11 +16,16 @@ export function App() {
   const [tab, setTab] = useState<Tab>('playlists')
   const [loggedIn, setLoggedIn] = useState<boolean | null>(null)
   const [playlists, setPlaylists] = useState<Playlist[]>([])
+  const [profiles, setProfiles] = useState(new Map<string, Profile>())
   const [status, setStatus] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
-  const load = async () => setPlaylists((await (await db).getAll('playlists')).sort((a, b) => a.name.localeCompare(b.name)))
+  const load = async () => {
+    const d = await db
+    setPlaylists((await d.getAll('playlists')).sort((a, b) => a.name.localeCompare(b.name)))
+    setProfiles(new Map((await d.getAll('profiles')).map(p => [p.id, p])))
+  }
 
   const running = useRef(false)
   const sync = useCallback(async () => {
@@ -33,6 +40,12 @@ export function App() {
       if (t.done) {
         setStatus(`${t.done} Playlists eingelesen` + (t.blocked ? ` · ${t.blocked} gesperrt` : ''))
         await load()
+      }
+      if (await hasAi()) {
+        try {
+          const n = await buildProfiles((i, all) => all && setStatus(`Profile ${i}/${all}`))
+          if (n) { setStatus('Profile aktuell'); await load() }
+        } catch (e) { await load(); setError((e as Error).message) }   // bereits fertige Stapel bleiben gespeichert
       }
     } catch (e) {
       if (e instanceof NotLoggedIn) setLoggedIn(false)
@@ -86,10 +99,10 @@ export function App() {
 
       <Scroll key={tab}>
         {tab === 'playlists' && (loggedIn
-          ? <Playlists items={playlists} />
+          ? <Playlists items={playlists} profiles={profiles} />
           : <div className="panel glass center"><p className="cap">Noch nicht mit Spotify verbunden.</p>
               <button className="pill glass hot" onClick={() => setTab('settings')}>Zu den Einstellungen</button></div>)}
-        {tab === 'settings' && <Settings loggedIn={!!loggedIn} onError={setError}
+        {tab === 'settings' && <Settings loggedIn={!!loggedIn} onError={setError} onAiSaved={sync}
           onLogout={async () => { await logout(); setLoggedIn(false) }} />}
       </Scroll>
 
@@ -115,16 +128,22 @@ function TabBtn(p: { on: boolean; onClick: () => void; label: string; icon: Reac
     <svg viewBox="0 0 24 24">{p.icon}</svg>{p.label}</button>
 }
 
-function Playlists({ items }: { items: Playlist[] }) {
+function Playlists({ items, profiles }: { items: Playlist[]; profiles: Map<string, Profile> }) {
   return <ul className="list">
-    {items.map(p => <li key={p.id} className="row glass">
-      {p.image ? <img src={p.image} alt="" loading="lazy" /> : <span className="ph" />}
-      <span className="meta"><b>{p.name}</b><small>{p.total} Songs · {p.ownedByMe ? 'eigene' : p.owner}{p.tracksBlocked ? ' · Tracks gesperrt' : ''}</small></span>
-    </li>)}
+    {items.map(p => {
+      const pr = profiles.get(p.id)
+      return <li key={p.id} className="row glass">
+        {p.image ? <img src={p.image} alt="" loading="lazy" /> : <span className="ph" />}
+        <span className="meta"><b>{p.name}</b>
+          <small>{p.total} Songs · {p.ownedByMe ? 'eigene' : p.owner}{p.tracksBlocked ? ' · Tracks gesperrt' : ''}</small>
+          {pr && <small className="prof">{[pr.genres.slice(0, 2).join(', '), pr.era, pr.mood].filter(Boolean).join(' · ')}</small>}
+        </span>
+      </li>
+    })}
   </ul>
 }
 
-function Settings(p: { loggedIn: boolean; onLogout: () => void; onError: (m: string) => void }) {
+function Settings(p: { loggedIn: boolean; onLogout: () => void; onError: (m: string) => void; onAiSaved: () => void }) {
   const [clientId, setClientId] = useState('')
   const [saved, setSaved] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -148,6 +167,7 @@ function Settings(p: { loggedIn: boolean; onLogout: () => void; onError: (m: str
           : <button className="pill glass hot" onClick={async () => { await save(); login().catch(e => p.onError(e.message)) }}>Mit Spotify anmelden</button>}
       </div>
     </section>
+    <AiKeys onSaved={p.onAiSaved} />
     <Look />
     <p className="cap">Alle Daten und Schlüssel bleiben nur auf diesem Gerät gespeichert.</p>
   </div>
@@ -177,5 +197,33 @@ function Look() {
       </div>
     </div>)}
     <div className="actions"><button className="pill glass" onClick={() => change(GLASS_DEFAULTS)}>Glas zurücksetzen</button></div>
+  </section>
+}
+
+/** KI-Schlüssel und Modelle. Gemini zuerst, Groq springt bei Fehler oder Limit ein. */
+function AiKeys({ onSaved }: { onSaved: () => void }) {
+  const fields = [
+    ['geminiKey', 'Gemini-Schlüssel', 'password'], ['geminiModel', 'Gemini-Modell', 'text'],
+    ['groqKey', 'Groq-Schlüssel (Ersatz)', 'password'], ['groqModel', 'Groq-Modell', 'text'],
+  ] as const
+  const [v, setV] = useState<Record<string, string>>({})
+  const [saved, setSaved] = useState(false)
+  useEffect(() => {
+    Promise.all(fields.map(async ([k]) => [k, (await kv.get<string>(k)) ?? AI_DEFAULTS[k as keyof typeof AI_DEFAULTS] ?? ''] as const))
+      .then(e => setV(Object.fromEntries(e)))
+  }, [])
+  const save = async () => {
+    for (const [k] of fields) await kv.set(k, (v[k] ?? '').trim())
+    setSaved(true); setTimeout(() => setSaved(false), 1500)
+    onSaved()
+  }
+  return <section className="panel glass">
+    <h2>KI</h2>
+    {fields.map(([k, label, type]) => <div key={k} className="kfield">
+      <label className="k" htmlFor={k}>{label}</label>
+      <input id={k} type={type} className="field mono" value={v[k] ?? ''} onChange={e => setV({ ...v, [k]: e.target.value })}
+        autoCapitalize="off" autoCorrect="off" spellCheck={false} autoComplete="off" />
+    </div>)}
+    <div className="actions"><button className="pill glass" onClick={save}>{saved ? 'Gespeichert ✓' : 'Speichern'}</button></div>
   </section>
 }

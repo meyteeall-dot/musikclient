@@ -28,20 +28,36 @@ export interface Track {
 
 export interface PlaylistTracks { id: string; tracks: Track[] }
 
+export interface Profile {
+  id: string
+  /** tracksSnapshot, aus dem das Profil berechnet wurde */
+  basedOn: string
+  artists: string[]
+  years?: [number, number]
+  examples: string[]
+  genres: string[]
+  mood: string
+  era: string
+  summary: string
+  provider: string
+}
+
 interface Schema extends DBSchema {
   kv: { key: string; value: unknown }
   playlists: { key: string; value: Playlist }
   tracks: { key: string; value: PlaylistTracks }
+  profiles: { key: string; value: Profile }
 }
 
 // Neue Stores (Tracks, Profile, Wahl-Historie) kommen als weitere Versionen hier dazu.
-export const db = openDB<Schema>('musikclient', 2, {
+export const db = openDB<Schema>('musikclient', 3, {
   upgrade(d, old) {
     if (old < 1) {
       d.createObjectStore('kv')
       d.createObjectStore('playlists', { keyPath: 'id' })
     }
     if (old < 2) d.createObjectStore('tracks', { keyPath: 'id' })
+    if (old < 3) d.createObjectStore('profiles', { keyPath: 'id' })
   },
 })
 
