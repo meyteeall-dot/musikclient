@@ -3,7 +3,7 @@ import { db, kv, type Playlist, type Profile } from '../data/db'
 import { syncPlaylists, syncTracks } from '../data/sync'
 import { AI_DEFAULTS, hasAi } from '../ai'
 import { buildProfiles } from '../features/profiles'
-import { NotLoggedIn } from '../spotify/api'
+import { NotLoggedIn, RateLimited } from '../spotify/api'
 import { accessToken, handleRedirect, login, logout, redirectUri } from '../spotify/auth'
 import { glassScroll } from './glass/scroll'
 import { CoverRow } from './Cover'
@@ -53,6 +53,7 @@ export function App() {
       }
     } catch (e) {
       if (e instanceof NotLoggedIn) setLoggedIn(false)
+      else if (e instanceof RateLimited) setStatus(`Spotify-Pause bis ${new Date(e.until).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}`)
       else setError(String((e as Error).message))
     }
     setBusy(false)
