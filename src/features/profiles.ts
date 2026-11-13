@@ -1,7 +1,7 @@
 /* Playlist-Profile: Künstler, Jahre und Beispielsongs werden lokal gezählt (kostet keine KI),
    Genres, Stimmung, Epoche und Kurzbeschreibung kommen von der KI – 10 Playlists pro Anfrage. */
 import { completeJson } from '../ai'
-import { db, type Playlist, type Profile, type Track } from '../data/db'
+import { db, kv, type Playlist, type Profile, type Track } from '../data/db'
 
 const VERSION = 2   // erhöhen, wenn sich die Eingabe an die KI ändert: alle Profile werden neu erzeugt
 const BATCH = 6   // ~3.500 Tokens pro Anfrage: passt ins Groq-Minutenlimit (8.000)
@@ -34,7 +34,8 @@ Playlists:
 export async function buildProfiles(onProgress?: (done: number, todo: number) => void) {
   const d = await db
   const profiles = new Map((await d.getAll('profiles')).map(p => [p.id, p]))
-  const todo = (await d.getAll('playlists')).filter(p => p.tracksSnapshot && profiles.get(p.id)?.basedOn !== `${VERSION}:${p.tracksSnapshot}`)
+  const excluded = new Set((await kv.get<string[]>('excluded')) ?? [])   // ignorierte Playlists brauchen kein Profil
+  const todo = (await d.getAll('playlists')).filter(p => p.tracksSnapshot && !excluded.has(p.id) && profiles.get(p.id)?.basedOn !== `${VERSION}:${p.tracksSnapshot}`)
   const batches: Playlist[][] = []
   for (let i = 0; i < todo.length; i += BATCH) batches.push(todo.slice(i, i + BATCH))
 

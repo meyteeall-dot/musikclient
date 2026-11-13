@@ -1,18 +1,25 @@
 import { useEffect, useState } from 'react'
 import { db, type Playlist, type Profile, type Track } from '../data/db'
+import { getExcluded, setExcluded } from '../features/suggest'
 import { play } from '../spotify/player'
 import { CoverRow } from './Cover'
 
 /** Inhalt einer Playlist in Spotify-Reihenfolge, aus der lokalen Datenbank (sofort, auch offline). */
-export function PlaylistView({ p, profile, onBack, onError }: { p: Playlist; profile?: Profile; onBack: () => void; onError: (m: string) => void }) {
+export function PlaylistView({ p, profile, onBack, onError, onChanged }: { p: Playlist; profile?: Profile; onBack: () => void; onError: (m: string) => void; onChanged: () => void }) {
   const [tracks, setTracks] = useState<Track[] | null>(null)
   useEffect(() => { db.then(d => d.get('tracks', p.id)).then(t => setTracks(t?.tracks ?? [])) }, [p.id])
   const missing = tracks ? p.total - tracks.length : 0
+  const [ignored, setIgnored] = useState(false)
+  useEffect(() => { getExcluded().then(ex => setIgnored(ex.has(p.id))) }, [p.id])
+  const toggle = async () => { await setExcluded(p.id, !ignored); setIgnored(!ignored); onChanged() }
 
   return <div className="panels">
     <CoverRow image={p.image} title={p.name} sub={`${p.total} Songs · ${p.ownedByMe ? 'eigene' : p.owner}`}
       extra={profile && <small className="prof">{[profile.genres.join(', '), profile.era, profile.mood].filter(Boolean).join(' · ')}</small>} />
     {profile?.summary && <p className="cap">{profile.summary}</p>}
+    {(p.ownedByMe || p.collaborative) && <div className="actions center">
+      <button className={'pill glass' + (ignored ? ' hot' : '')} aria-pressed={ignored} onClick={toggle}>
+        {ignored ? '✓ Bei Vorschlägen ignoriert' : 'Bei Vorschlägen ignorieren'}</button></div>}
     {!p.tracksSnapshot && <p className="cap">Songs noch nicht eingelesen – das passiert beim nächsten Abgleich, sobald Spotify es zulässt.</p>}
     {p.tracksBlocked && <p className="cap">Spotify gibt die Songs dieser Playlist nicht heraus (fremde Playlist im Entwicklungsmodus).</p>}
     {!!tracks?.length && <section className="panel glass tracks" data-fixed>

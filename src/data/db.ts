@@ -43,7 +43,8 @@ export interface Profile {
 }
 
 /** Eine Entscheidung: Song in Playlist gelegt. Grundlage fürs Lernen. */
-export interface Choice { id?: number; trackId: string; artistIds: string[]; playlistId: string; suggested: string[]; at: number }
+/** rejected: „passt auf keinen Fall“ statt hinzugefügt. */
+export interface Choice { id?: number; trackId: string; artistIds: string[]; playlistId: string; suggested: string[]; at: number; rejected?: boolean }
 
 interface Schema extends DBSchema {
   kv: { key: string; value: unknown }

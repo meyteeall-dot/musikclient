@@ -3,6 +3,7 @@ import { db, kv, type Playlist, type Profile } from '../data/db'
 import { syncPlaylists, syncTracks } from '../data/sync'
 import { AI_DEFAULTS, hasAi } from '../ai'
 import { buildProfiles } from '../features/profiles'
+import { getExcluded } from '../features/suggest'
 import { clearPause, NotLoggedIn, RateLimited } from '../spotify/api'
 import { startWebPlayer } from '../spotify/player'
 import { accessToken, handleRedirect, login, logout, redirectUri } from '../spotify/auth'
@@ -23,6 +24,7 @@ export function App() {
   const [loggedIn, setLoggedIn] = useState<boolean | null>(null)
   const [playlists, setPlaylists] = useState<Playlist[]>([])
   const [profiles, setProfiles] = useState(new Map<string, Profile>())
+  const [excluded, setExcludedIds] = useState(new Set<string>())
   const [status, setStatus] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -31,6 +33,7 @@ export function App() {
     const d = await db
     setPlaylists((await d.getAll('playlists')).sort((a, b) => a.name.localeCompare(b.name)))
     setProfiles(new Map((await d.getAll('profiles')).map(p => [p.id, p])))
+    setExcludedIds(await getExcluded())
   }
 
   const running = useRef(false)
@@ -115,8 +118,8 @@ export function App() {
           : <div className="panel glass center"><p className="cap">Noch nicht mit Spotify verbunden.</p>
               <button className="pill glass hot" onClick={() => setTab('settings')}>Zu den Einstellungen</button></div>)}
         {tab === 'playlists' && (loggedIn
-          ? (open ? <PlaylistView p={open} profile={profiles.get(open.id)} onBack={() => setOpenId(null)} onError={setError} />
-            : <Playlists items={playlists} profiles={profiles} onOpen={setOpenId} />)
+          ? (open ? <PlaylistView p={open} profile={profiles.get(open.id)} onBack={() => setOpenId(null)} onError={setError} onChanged={load} />
+            : <Playlists items={playlists} profiles={profiles} excluded={excluded} onOpen={setOpenId} />)
           : <div className="panel glass center"><p className="cap">Noch nicht mit Spotify verbunden.</p>
               <button className="pill glass hot" onClick={() => setTab('settings')}>Zu den Einstellungen</button></div>)}
         {tab === 'player' && <Player onError={setError} />}
@@ -184,12 +187,12 @@ function Tabs({ tab, onPick }: { tab: Tab; onPick: (t: Tab) => void }) {
   </nav>
 }
 
-function Playlists({ items, profiles, onOpen }: { items: Playlist[]; profiles: Map<string, Profile>; onOpen: (id: string) => void }) {
+function Playlists({ items, profiles, excluded, onOpen }: { items: Playlist[]; profiles: Map<string, Profile>; excluded: Set<string>; onOpen: (id: string) => void }) {
   return <ul className="list">
     {items.map(p => {
       const pr = profiles.get(p.id)
       return <li key={p.id}><CoverRow image={p.image} title={p.name} onClick={() => onOpen(p.id)}
-        sub={`${p.total} Songs · ${p.ownedByMe ? 'eigene' : p.owner}${p.tracksBlocked ? ' · Tracks gesperrt' : p.tracksSnapshot ? '' : ' · wird noch eingelesen'}`}
+        sub={`${p.total} Songs · ${p.ownedByMe ? 'eigene' : p.owner}${excluded.has(p.id) ? ' · ignoriert' : ''}${p.tracksBlocked ? ' · Tracks gesperrt' : p.tracksSnapshot ? '' : ' · wird noch eingelesen'}`}
         extra={pr && <small className="prof">{[pr.genres.slice(0, 2).join(', '), pr.era, pr.mood].filter(Boolean).join(' · ')}</small>} /></li>
     })}
   </ul>
