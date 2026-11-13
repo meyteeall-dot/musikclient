@@ -5,19 +5,19 @@ const BASE = 'https://api.spotify.com/v1'
 
 export class NotLoggedIn extends Error {}
 export class ApiError extends Error { constructor(public status: number, msg: string) { super(msg) } }
-/** Spotify drosselt die App: bis "until" keine Anfragen schicken, jede weitere verlängert die Sperre nur. */
+/** Spotify drosselt die App. Wann es wieder geht, sagt Spotify nicht. */
 export class RateLimited extends ApiError {
-  constructor(public until: number) {
-    super(429, `Spotify hat die App wegen zu vieler Anfragen kurz gesperrt. Wieder möglich ab ${new Date(until).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}.`)
-  }
+  constructor() { super(429, 'Spotify-Limit erreicht – zu viele Anfragen. Später erneut versuchen oder oben auf Abgleich tippen.') }
 }
-let pausedUntil: number | null = null   // null = noch nicht aus der Datenbank gelesen
-const PAUSE_MS = 15 * 60_000   // Spotify nennt keine Wartezeit: 15 Minuten Ruhe
+// Pause nach Sperre: automatische Versuche warten 15, 30, 60, 120, max. 240 Minuten; Erfolg setzt zurück
+let pause: { until: number; step: number } | null = null   // null = noch nicht aus der Datenbank gelesen
+/** Nutzer will es jetzt wissen (Abgleich-Knopf): Pause aufheben. */
+export const clearPause = async () => { pause = { until: 0, step: 0 }; await kv.del('spotifyBackoff') }
 
 /** Spotify-Web-API-Aufruf mit Token-Erneuerung bei 401, Warten bei 429 und neuem Versuch bei Serverfehlern (5xx). */
 export async function api<T = any>(path: string, init: RequestInit = {}, retry = 0): Promise<T> {
-  pausedUntil ??= (await kv.get<number>('spotifyPause')) ?? 0
-  if (Date.now() < pausedUntil) throw new RateLimited(pausedUntil)
+  pause ??= (await kv.get<{ until: number; step: number }>('spotifyBackoff')) ?? { until: 0, step: 0 }
+  if (Date.now() < pause.until) throw new RateLimited()
   const token = await accessToken(retry > 0 && retry < 2)
   if (!token) throw new NotLoggedIn()
   const r = await fetch(path.startsWith('http') ? path : BASE + path, {
@@ -31,14 +31,16 @@ export async function api<T = any>(path: string, init: RequestInit = {}, retry =
       await new Promise(res => setTimeout(res, said))
       return api(path, init, retry + 2)
     }
-    pausedUntil = Date.now() + Math.max(said || 0, PAUSE_MS)   // Kontingent erschöpft: Pause statt weiter anklopfen
-    await kv.set('spotifyPause', pausedUntil)
-    throw new RateLimited(pausedUntil)
+    const step = Math.min(pause.step + 1, 5)   // Kontingent erschöpft: Pause statt weiter anklopfen, jedes Mal länger
+    pause = { until: Date.now() + Math.max(said || 0, 15 * 60_000 * 2 ** (step - 1)), step }
+    await kv.set('spotifyBackoff', pause)
+    throw new RateLimited()
   }
   if (r.status >= 500 && retry < 6) {   // Spotify hat kurz Probleme (502/503): 1, 3, 6 s warten
     await new Promise(res => setTimeout(res, [1000, 1000, 3000, 3000, 6000, 6000][retry]))
     return api(path, init, retry + 2)
   }
+  if (r.ok && pause.step) await clearPause()
   if (!r.ok) throw new ApiError(r.status, `Spotify ${r.status}: ${(await r.text()).slice(0, 200)}`)
   return (r.status === 204 ? undefined : r.json()) as T
 }

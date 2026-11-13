@@ -3,7 +3,7 @@ import { db, kv, type Playlist, type Profile } from '../data/db'
 import { syncPlaylists, syncTracks } from '../data/sync'
 import { AI_DEFAULTS, hasAi } from '../ai'
 import { buildProfiles } from '../features/profiles'
-import { NotLoggedIn, RateLimited } from '../spotify/api'
+import { clearPause, NotLoggedIn, RateLimited } from '../spotify/api'
 import { accessToken, handleRedirect, login, logout, redirectUri } from '../spotify/auth'
 import { glassScroll } from './glass/scroll'
 import { CoverRow } from './Cover'
@@ -53,7 +53,7 @@ export function App() {
       }
     } catch (e) {
       if (e instanceof NotLoggedIn) setLoggedIn(false)
-      else if (e instanceof RateLimited) setStatus(`Spotify-Pause bis ${new Date(e.until).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}`)
+      else if (e instanceof RateLimited) setStatus('Spotify-Limit · pausiert')
       else setError(String((e as Error).message))
     }
     setBusy(false)
@@ -91,7 +91,7 @@ export function App() {
       <header className="top">
         <div className="brand"><span className="dot" /><span className="word">Musik<i>·</i>client</span></div>
         <div className="tools">
-          {loggedIn && <button className={'iconbtn glass' + (busy ? ' spin' : '')} aria-label="Jetzt abgleichen" onClick={sync}>
+          {loggedIn && <button className={'iconbtn glass' + (busy ? ' spin' : '')} aria-label="Jetzt abgleichen" onClick={async () => { if (!busy) { await clearPause(); sync() } }}>
             <svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5" /></svg>
           </button>}
         </div>
