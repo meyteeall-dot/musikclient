@@ -31,7 +31,7 @@ export function Search({ onError, onAdded }: { onError: (m: string) => void; onA
   }
 
   if (song) return <div className="panels">
-    <CoverRow big image={song.image} title={song.name} sub={`${song.artists.join(', ')}${song.year ? ` · ${song.year}` : ''}`} />
+    <CoverRow image={song.image} title={song.name} sub={`${song.artists.join(', ')}${song.year ? ` · ${song.year}` : ''}`} />
     {!res && <p className="cap">Suche passende Playlists …</p>}
     {res?.suggestions.map((s, i) => <Sugg key={s.playlist.id} image={s.playlist.image} name={s.playlist.name} reason={s.reason}
       state={added[s.playlist.id]} onAdd={() => add(i)} />)}

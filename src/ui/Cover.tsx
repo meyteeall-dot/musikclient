@@ -7,9 +7,9 @@ export function Cover({ url }: { url?: string }) {
 }
 
 /** Glaszeile mit Cover, Titel und Unterzeilen; als Knopf, wenn onClick da ist. */
-export function CoverRow(p: { image?: string; title: string; sub?: React.ReactNode; extra?: React.ReactNode; big?: boolean; onClick?: () => void }) {
+export function CoverRow(p: { image?: string; title: string; sub?: React.ReactNode; extra?: React.ReactNode; onClick?: () => void }) {
   const Tag = p.onClick ? 'button' : 'div'
-  return <Tag className={'row glass' + (p.big ? ' big' : '')} onClick={p.onClick}>
+  return <Tag className="row glass" onClick={p.onClick}>
     <Cover url={p.image} />
     <span className="meta"><b>{p.title}</b>{p.sub && <small>{p.sub}</small>}{p.extra}</span>
   </Tag>
