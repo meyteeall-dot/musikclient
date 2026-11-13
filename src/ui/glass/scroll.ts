@@ -1,6 +1,6 @@
 import { onFrame } from './engine'
 
-/** Touch-/Maus-/Rad-Scrollen mit Schwung und Gummiband, getaktet mit dem Glas (onFrame). Gibt Aufräumfunktion zurück. */
+/** Wischen irgendwo auf dem Bildschirm scrollt diesen Bereich. Touch-/Maus-/Rad-Scrollen mit Schwung und Gummiband, getaktet mit dem Glas (onFrame). Gibt Aufräumfunktion zurück. */
 export function glassScroll(box: HTMLElement) {
   const inner = box.firstElementChild as HTMLElement
   let y = 0, v = 0, shown = NaN, moved = false
@@ -45,17 +45,17 @@ export function glassScroll(box: HTMLElement) {
   // Browser scrollt selbst (z. B. Fokus auf ein Eingabefeld): in unser y übernehmen
   const native = () => { if (box.scrollTop) { y = clamp(y + box.scrollTop); box.scrollTop = 0 } }
 
-  box.addEventListener('pointerdown', down)
+  addEventListener('pointerdown', down)
   addEventListener('pointermove', move); addEventListener('pointerup', up); addEventListener('pointercancel', up)
-  box.addEventListener('click', click, true)
-  box.addEventListener('wheel', wheel, { passive: false })
+  addEventListener('click', click, true)
+  addEventListener('wheel', wheel, { passive: false })
   box.addEventListener('scroll', native)
   return () => {
     off()
-    box.removeEventListener('pointerdown', down)
+    removeEventListener('pointerdown', down)
     removeEventListener('pointermove', move); removeEventListener('pointerup', up); removeEventListener('pointercancel', up)
-    box.removeEventListener('click', click, true)
-    box.removeEventListener('wheel', wheel)
+    removeEventListener('click', click, true)
+    removeEventListener('wheel', wheel)
     box.removeEventListener('scroll', native)
   }
 }

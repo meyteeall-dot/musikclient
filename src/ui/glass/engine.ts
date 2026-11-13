@@ -132,8 +132,8 @@ export function initGlass(cv: HTMLCanvasElement) {
     const dt = Math.max(1, e.timeStamp - L.pt)
     L.fvx = L.fvx * .7 + (e.clientX - L.px) / dt * .3; L.fvy = L.fvy * .7 + (e.clientY - L.py) / dt * .3
     L.px = e.clientX; L.py = e.clientY; L.pt = e.timeStamp
-    // Scrollen: Finger bewegt den Inhalt, nicht das Glas
-    if (Math.hypot(L.px - L.p0x, L.py - L.p0y) > 10 && L.el.closest('.scroll')) { L.grab = null; grabs.delete(e.pointerId) }
+    // Wischen scrollt (überall auf dem Bildschirm): Finger bewegt den Inhalt, nicht das Glas
+    if (Math.hypot(L.px - L.p0x, L.py - L.p0y) > 10 && !L.fixed) { L.grab = null; grabs.delete(e.pointerId) }
   }, true)
   const release = (e: PointerEvent) => { const L = grabs.get(e.pointerId); if (L) { grabs.delete(e.pointerId); L.grab = null } }
   document.addEventListener('pointerup', release, true); document.addEventListener('pointercancel', release, true)

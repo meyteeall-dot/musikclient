@@ -18,7 +18,7 @@
 html,body,#root{height:100%;margin:0}
 body{background:radial-gradient(120% 80% at 50% 0%,var(--bg-2),var(--bg) 60%);background-color:var(--bg);
   color:var(--ink);font-family:var(--f-body);overflow:hidden;overscroll-behavior:none;
-  -webkit-user-select:none;user-select:none;touch-action:manipulation}
+  -webkit-user-select:none;user-select:none;touch-action:none}   /* Wischen gehört dem eigenen Scrollen */
 button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
 :focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 
