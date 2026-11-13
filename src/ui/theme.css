@@ -173,6 +173,12 @@ svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.7;stroke
 .misses ul{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:10px}
 .misses li{display:flex;flex-direction:column;gap:2px;font-size:13px}
 .misses small{color:var(--muted);font-size:12px}
+.outlier,.dupes li{display:flex;flex-direction:column;gap:4px;padding:10px 0;border-top:1px solid var(--line)}
+.outlier b,.dupes b{font-size:14px;font-weight:700}
+.outlier small,.dupes small{font-size:12.5px;color:var(--muted);line-height:1.4}
+.outlier .pill{align-self:flex-start;margin-top:4px;min-height:38px;padding:8px 14px;font-size:13px}
+.dupes{list-style:none;margin:0;padding:0}
+textarea.field{resize:vertical;font-family:inherit;line-height:1.45;-webkit-user-select:text;user-select:text}
 .sugg{gap:10px}
 .sugg-head{display:flex;align-items:center;gap:12px}
 .sugg-head .never{margin-left:auto;width:32px;height:32px;flex:none;border-radius:50%;font-size:14px;color:var(--muted);

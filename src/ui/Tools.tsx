@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react'
 import { lastAccuracy, measureAccuracy, type Accuracy } from '../features/accuracy'
+import { findDuplicates, type Dupe } from '../features/tools'
 
 /** Werkzeuge, die Spotify nicht hat. */
 export function Tools({ onError }: { onError: (m: string) => void }) {
   return <div className="panels">
     <AccuracyPanel onError={onError} />
+    <DupesPanel />
   </div>
 }
 
@@ -33,5 +35,17 @@ function AccuracyPanel({ onError }: { onError: (m: string) => void }) {
     </details>}
     <div className="actions"><button className="pill glass hot" disabled={busy !== null} onClick={run}>
       {busy !== null ? `Prüfe … ${busy}/${N}` : res ? 'Erneut messen' : 'Jetzt messen'}</button></div>
+  </section>
+}
+
+function DupesPanel() {
+  const [list, setList] = useState<Dupe[] | null>(null)
+  return <section className="panel glass">
+    <h2>Doppelte Songs</h2>
+    <p className="cap left">Derselbe Song mehrfach in einer Playlist – genau gleich oder als andere Version (Remaster, Live, Edit). Lokal, ohne Anfragen.</p>
+    {list && !list.length && <p className="cap left">Keine doppelten Songs gefunden.</p>}
+    {list && !!list.length && <ul className="dupes">{list.map((x, i) => <li key={i}>
+      <b>{x.name}</b><small>{x.count}× in „{x.playlist.name}“{x.versions ? ' · verschiedene Versionen' : ''}</small></li>)}</ul>}
+    <div className="actions"><button className="pill glass" onClick={() => findDuplicates().then(setList)}>{list ? 'Erneut suchen' : 'Suchen'}</button></div>
   </section>
 }
