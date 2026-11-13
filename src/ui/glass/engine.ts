@@ -39,6 +39,17 @@ export function applyGlass(v: GlassValues) {
   for (const s of GLASS_SLIDERS) G[s.k] = s.map(v[s.k] ?? s.def)
 }
 
+/* Ein gemeinsamer Bild-Takt: Hooks (z. B. Scrollen) laufen vor dem Glas-Zeichnen im selben Frame,
+   damit Text und Glas nie gegeneinander verrutschen. */
+const hooks = new Set<(dt: number) => void>()
+export const onFrame = (f: (dt: number) => void) => { hooks.add(f); return () => { hooks.delete(f) } }
+let render: ((now: number) => void) | null = null, lastT = 0
+function tick(now: number) {
+  const dt = Math.min(.05, (now - lastT) / 1000 || .016); lastT = now
+  hooks.forEach(f => f(dt)); render?.(now)
+  requestAnimationFrame(tick)
+}
+
 const RM = matchMedia('(prefers-reduced-motion: reduce)').matches
 const FIXED = '[data-fixed], .gs-track'   // verformbar, aber wandert nicht mit dem Finger
 const BIG = '[data-big]'                  // große Flächen: Spur hinter dem Finger statt Dehnen
@@ -75,6 +86,7 @@ function light(e: PointerEvent) {
 function unlight(e: PointerEvent) { if (e.pointerType !== 'mouse') { lit?.classList.remove('lit'); lit = null } }
 
 export function initGlass(cv: HTMLCanvasElement) {
+  requestAnimationFrame(tick)
   document.addEventListener('pointermove', light); document.addEventListener('pointerdown', light)
   document.addEventListener('pointerup', unlight); document.addEventListener('pointercancel', unlight)
   if (document.documentElement.classList.contains('gl')) return
@@ -234,8 +246,6 @@ export function initGlass(cv: HTMLCanvasElement) {
       gl!.drawArrays(gl!.TRIANGLES, 0, 6)
     }
   }
-  const loop = (now: number) => { draw(now); requestAnimationFrame(loop) }
   document.documentElement.classList.add('gl')
-  draw(performance.now())
-  requestAnimationFrame(loop)
+  render = draw
 }

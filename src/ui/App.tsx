@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { db, kv, type Playlist } from '../data/db'
 import { syncPlaylists } from '../data/sync'
 import { NotLoggedIn } from '../spotify/api'
 import { accessToken, handleRedirect, login, logout, redirectUri } from '../spotify/auth'
+import { glassScroll } from './glass/scroll'
 import { applyGlass, applyTheme, GLASS_DEFAULTS, GLASS_SLIDERS, THEMES, type GlassValues, type ThemeId } from './glass/engine'
 
 type Tab = 'playlists' | 'settings'
@@ -23,7 +24,7 @@ export function App() {
     setBusy(true)
     try {
       const r = await syncPlaylists()
-      setStatus(r.added + r.changed + r.removed ? `${r.added} neu · ${r.changed} geändert · ${r.removed} weg` : 'aktuell')
+      setStatus([r.added && `${r.added} neu`, r.changed && `${r.changed} geändert`, r.removed && `${r.removed} weg`].filter(Boolean).join(' · ') || 'aktuell')
       await load()
     } catch (e) {
       if (e instanceof NotLoggedIn) setLoggedIn(false)
@@ -74,14 +75,14 @@ export function App() {
 
       {error && <div className="panel glass error" onClick={() => setError('')}>{error}</div>}
 
-      <main className="scroll" key={tab}>
+      <Scroll key={tab}>
         {tab === 'playlists' && (loggedIn
           ? <Playlists items={playlists} />
           : <div className="panel glass center"><p className="cap">Noch nicht mit Spotify verbunden.</p>
               <button className="pill glass hot" onClick={() => setTab('settings')}>Zu den Einstellungen</button></div>)}
         {tab === 'settings' && <Settings loggedIn={!!loggedIn} onError={setError}
           onLogout={async () => { await logout(); setLoggedIn(false) }} />}
-      </main>
+      </Scroll>
 
       <nav className="tabs glass" role="tablist" style={{ '--n': TABS.length, '--i': TABS.indexOf(tab) } as React.CSSProperties}>
         <span className="ind" />
@@ -92,6 +93,12 @@ export function App() {
       </nav>
     </div>
   )
+}
+
+function Scroll({ children }: { children: React.ReactNode }) {
+  const ref = useRef<HTMLElement>(null)
+  useEffect(() => glassScroll(ref.current!), [])
+  return <main className="scroll" ref={ref}><div className="sc">{children}</div></main>
 }
 
 function TabBtn(p: { on: boolean; onClick: () => void; label: string; icon: React.ReactNode }) {

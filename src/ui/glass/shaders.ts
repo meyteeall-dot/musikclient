@@ -214,7 +214,7 @@ vec2 bend(vec3 N, float ior, float T, float lim){
   return off * min(1., lim / max(length(off), 1e-4));
 }
 void main(){
-  float cdist = min(min(vP.x - uClip.x, uClip.z - vP.x), min(vP.y - uClip.y, uClip.w - vP.y));
+  float cdist = min(vP.y - uClip.y, uClip.w - vP.y);   // nur oben/unten: seitlich darf das Glas beim Wabbeln überstehen
   if (cdist <= 0.) discard;
   float clipA = smoothstep(0., 14. * uDpr, cdist);
   float d0 = box(vP);
