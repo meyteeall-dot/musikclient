@@ -6,7 +6,7 @@ const BASE = 'https://api.spotify.com/v1'
 export class NotLoggedIn extends Error {}
 export class ApiError extends Error { constructor(public status: number, msg: string) { super(msg) } }
 
-/** Spotify-Web-API-Aufruf mit Token-Erneuerung bei 401 und Warten bei 429. */
+/** Spotify-Web-API-Aufruf mit Token-Erneuerung bei 401, Warten bei 429 und neuem Versuch bei Serverfehlern (5xx). */
 export async function api<T = any>(path: string, init: RequestInit = {}, retry = 0): Promise<T> {
   const token = await accessToken(retry > 0 && retry < 2)
   if (!token) throw new NotLoggedIn()
@@ -20,6 +20,10 @@ export async function api<T = any>(path: string, init: RequestInit = {}, retry =
     await new Promise(res => setTimeout(res, wait * 1000))
     return api(path, init, retry + 2)
   }
+  if (r.status >= 500 && retry < 6) {   // Spotify hat kurz Probleme (502/503): 1, 3, 6 s warten
+    await new Promise(res => setTimeout(res, [1000, 1000, 3000, 3000, 6000, 6000][retry]))
+    return api(path, init, retry + 2)
+  }
   if (!r.ok) throw new ApiError(r.status, `Spotify ${r.status}: ${(await r.text()).slice(0, 200)}`)
   return (r.status === 204 ? undefined : r.json()) as T
 }
@@ -28,9 +32,11 @@ export async function api<T = any>(path: string, init: RequestInit = {}, retry =
 export async function getAll<T>(path: string): Promise<T[]> {
   const out: T[] = []
   for (let next: string | null = path; next; ) {
-    const page: { items: T[]; next: string | null } = await api(next)
+    const page: { items: T[]; next: string | null; total?: number } = await api(next)
     out.push(...page.items)
     next = page.next
+    // Spotify liefert bei Störungen manchmal Seiten ohne "next": dann lieber abbrechen als Unvollständiges speichern
+    if (!next && page.total != null && out.length < page.total) throw new ApiError(0, `Spotify hat nur ${out.length} von ${page.total} Einträgen geliefert – bitte später erneut abgleichen.`)
   }
   return out
 }

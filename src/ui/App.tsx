@@ -38,7 +38,7 @@ export function App() {
     setBusy(true)
     try {
       const r = await syncPlaylists()
-      setStatus([r.added && `${r.added} neu`, r.changed && `${r.changed} geändert`, r.removed && `${r.removed} weg`].filter(Boolean).join(' · ') || 'aktuell')
+      setStatus([r.added && `${r.added} neu`, r.changed && `${r.changed} geändert`, r.removed && `${r.removed} weg`, r.held && `${r.held} fehlen (gehalten)`].filter(Boolean).join(' · ') || 'aktuell')
       await load()
       const t = await syncTracks((n, all) => all && setStatus(`Tracks ${n}/${all}`))
       if (t.done) {
