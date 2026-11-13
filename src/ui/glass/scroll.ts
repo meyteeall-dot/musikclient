@@ -49,8 +49,12 @@ export function glassScroll(box: HTMLElement) {
   addEventListener('pointermove', move); addEventListener('pointerup', up); addEventListener('pointercancel', up)
   addEventListener('click', click, true)
   addEventListener('wheel', wheel, { passive: false })
+  // Ansicht innerhalb desselben Tabs gewechselt (z. B. Liste ↔ Vorschläge): oben anfangen
+  const top = () => { y = 0; v = 0 }
   box.addEventListener('scroll', native)
+  addEventListener('glass-scroll-top', top)
   return () => {
+    removeEventListener('glass-scroll-top', top)
     off()
     removeEventListener('pointerdown', down)
     removeEventListener('pointermove', move); removeEventListener('pointerup', up); removeEventListener('pointercancel', up)

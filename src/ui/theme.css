@@ -179,6 +179,10 @@ svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.7;stroke
 .outlier .pill{align-self:flex-start;margin-top:4px;min-height:38px;padding:8px 14px;font-size:13px}
 .dupes{list-style:none;margin:0;padding:0}
 textarea.field{resize:vertical;font-family:inherit;line-height:1.45;-webkit-user-select:text;user-select:text}
+.inbox-item{position:relative}
+.inbox-item .row{padding-right:52px}
+.never{width:32px;height:32px;flex:none;border-radius:50%;font-size:14px;color:var(--muted);background:rgba(255,255,255,.06);box-shadow:inset 0 0 0 1px var(--line)}
+.inbox-item .never{position:absolute;right:12px;top:50%;margin-top:-16px}
 .sugg{gap:10px}
 .sugg-head{display:flex;align-items:center;gap:12px}
 .sugg-head .never{margin-left:auto;width:32px;height:32px;flex:none;border-radius:50%;font-size:14px;color:var(--muted);

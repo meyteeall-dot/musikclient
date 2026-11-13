@@ -9,8 +9,6 @@ export function Search({ onError, onAdded }: { onError: (m: string) => void; onA
   const [q, setQ] = useState('')
   const [hits, setHits] = useState<SearchHit[]>([])
   const [song, setSong] = useState<SearchHit | null>(null)
-  const [res, setRes] = useState<SuggestResult | null>(null)
-  const [added, setAdded] = useState<Record<string, 'busy' | 'done'>>({})
 
   useEffect(() => {
     if (q.trim().length < 2) { setHits([]); return }
@@ -18,42 +16,13 @@ export function Search({ onError, onAdded }: { onError: (m: string) => void; onA
     return () => clearTimeout(id)
   }, [q])
 
-  const pick = async (h: SearchHit) => {
-    setSong(h); setRes(null); setAdded({})
-    try { setRes(await suggest(h)) } catch (e) { onError((e as Error).message); setSong(null) }
-  }
-  const add = async (i: number) => {
-    const s = res!.suggestions[i]
-    setAdded(a => ({ ...a, [s.playlist.id]: 'busy' }))
-    try {
-      await choose(song!, s.playlist, res!.suggestions.map(x => x.playlist.id))
-      setAdded(a => ({ ...a, [s.playlist.id]: 'done' })); onAdded()
-    } catch (e) { setAdded(a => { const { [s.playlist.id]: _, ...r } = a; return r }); onError((e as Error).message) }
-  }
-
-  const no = async (i: number) => {   // „auf keinen Fall": merken und Karte entfernen
-    const s = res!.suggestions[i]
-    try { await reject(song!, s.playlist); setRes(r => r && { ...r, suggestions: r.suggestions.filter(x => x !== s) }) }
-    catch (e) { onError((e as Error).message) }
-  }
-
-  if (song) return <div className="panels">
-    <CoverRow image={song.image} title={song.name} sub={`${song.artists.join(', ')}${song.year ? ` · ${song.year}` : ''}`} />
-    <div className="actions center"><button className="pill glass" onClick={() => play({ uris: [song.uri] }).catch(e => onError(e.message))}>▶ Abspielen</button></div>
-    {!res && <p className="cap">Suche passende Playlists …</p>}
-    {res?.suggestions.map((s, i) => <Sugg key={s.playlist.id} image={s.playlist.image} name={s.playlist.name} reason={s.reason}
-      state={added[s.playlist.id]} onAdd={() => add(i)} onNever={() => no(i)} />)}
-    {res && !res.suggestions.length && <p className="cap">Keine eigene Playlist gefunden, in die der Song noch passt.</p>}
-    {res?.contains.length ? <p className="cap">Schon drin in: {res.contains.map(p => p.name).join(', ')}</p> : null}
-    {res && <p className="cap">Vorschläge von: {res.provider}</p>}
-    <div className="actions center"><button className="pill glass" onClick={() => setSong(null)}>Zurück zur Suche</button></div>
-  </div>
+  if (song) return <SongSuggest song={song} back="Zurück zur Suche" onBack={() => setSong(null)} onError={onError} onAdded={onAdded} />
 
   return <div className="panels">
     <input className="field" type="search" enterKeyHint="search" placeholder="Song oder Künstler suchen"
       value={q} onChange={e => setQ(e.target.value)} autoCorrect="off" spellCheck={false} />
     <ul className="list">
-      {hits.map(h => <li key={h.id}><CoverRow image={h.image} title={h.name} onClick={() => pick(h)}
+      {hits.map(h => <li key={h.id}><CoverRow image={h.image} title={h.name} onClick={() => setSong(h)}
         sub={`${h.artists.join(', ')}${h.year ? ` · ${h.year}` : ''}`} /></li>)}
     </ul>
   </div>
@@ -68,4 +37,42 @@ function Sugg(p: { image?: string; name: string; reason: string; state?: 'busy' 
       {p.state === 'done' ? 'Hinzugefügt ✓' : p.state ? 'Füge hinzu …' : 'Hinzufügen'}
     </button>
   </section>
+}
+
+/** Ein Song → 3 Playlist-Vorschläge mit Begründung → Hinzufügen oder „auf keinen Fall“. Genutzt von Suche und Inbox. */
+export function SongSuggest({ song, back, onBack, onError, onAdded }: { song: SearchHit; back: string; onBack: () => void; onError: (m: string) => void; onAdded: () => void }) {
+  const [res, setRes] = useState<SuggestResult | null>(null)
+  const [added, setAdded] = useState<Record<string, 'busy' | 'done'>>({})
+  useEffect(() => { suggest(song).then(setRes, e => { onError((e as Error).message); onBack() }) }, [song.id])
+  useEffect(() => { // eigene Ansicht im selben Scrollbereich: beim Öffnen und Schließen nach oben
+    dispatchEvent(new Event('glass-scroll-top'))
+    return () => { dispatchEvent(new Event('glass-scroll-top')) }
+  }, [])
+
+  const add = async (i: number) => {
+    const s = res!.suggestions[i]
+    setAdded(a => ({ ...a, [s.playlist.id]: 'busy' }))
+    try {
+      await choose(song, s.playlist, res!.suggestions.map(x => x.playlist.id))
+      setAdded(a => ({ ...a, [s.playlist.id]: 'done' })); onAdded()
+    } catch (e) { setAdded(a => { const { [s.playlist.id]: _, ...r } = a; return r }); onError((e as Error).message) }
+  }
+  const no = async (i: number) => {   // „auf keinen Fall": merken und Karte entfernen
+    const s = res!.suggestions[i]
+    try { await reject(song, s.playlist); setRes(r => r && { ...r, suggestions: r.suggestions.filter(x => x !== s) }) }
+    catch (e) { onError((e as Error).message) }
+  }
+
+  return <div className="panels">
+    <CoverRow image={song.image} title={song.name} sub={`${song.artists.join(', ')}${song.year ? ` · ${song.year}` : ''}`} />
+    <div className="actions center"><button className="pill glass" onClick={() => play({ uris: [song.uri] }).catch(e => onError(e.message))}>▶ Abspielen</button></div>
+    {!res && <p className="cap">Suche passende Playlists …</p>}
+    {res?.suggestions.map((s, i) => <Sugg key={s.playlist.id} image={s.playlist.image} name={s.playlist.name} reason={s.reason}
+      state={added[s.playlist.id]} onAdd={() => add(i)} onNever={() => no(i)} />)}
+    {res && !res.suggestions.length && <p className="cap">Keine eigene Playlist gefunden, in die der Song noch passt.</p>}
+    {res?.contains.length ? <p className="cap">Schon drin in: {res.contains.map(p => p.name).join(', ')}</p> : null}
+    {res && <p className="cap">Vorschläge von: {res.provider}</p>}
+    <div className="actions center"><button className="pill glass" onClick={onBack}>{back}</button></div>
+  </div>
+
 }

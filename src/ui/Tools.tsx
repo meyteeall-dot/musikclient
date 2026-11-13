@@ -1,10 +1,18 @@
 import { useEffect, useState } from 'react'
 import { lastAccuracy, measureAccuracy, type Accuracy } from '../features/accuracy'
+import { doneInbox, loadInbox } from '../features/inbox'
 import { findDuplicates, type Dupe } from '../features/tools'
+import type { SearchHit } from '../spotify/api'
+import { CoverRow } from './Cover'
+import { SongSuggest } from './Search'
 
 /** Werkzeuge, die Spotify nicht hat. */
-export function Tools({ onError }: { onError: (m: string) => void }) {
+export function Tools({ onError, onAdded }: { onError: (m: string) => void; onAdded: () => void }) {
+  const [song, setSong] = useState<SearchHit | null>(null)
+  if (song) return <SongSuggest song={song} back="Zurück zur Inbox" onError={onError}
+    onBack={() => setSong(null)} onAdded={() => { doneInbox(song.id); inboxCache = inboxCache?.filter(x => x.id !== song.id) ?? null; onAdded() }} />
   return <div className="panels">
+    <InboxPanel onError={onError} onPick={setSong} />
     <AccuracyPanel onError={onError} />
     <DupesPanel />
   </div>
@@ -47,5 +55,26 @@ function DupesPanel() {
     {list && !!list.length && <ul className="dupes">{list.map((x, i) => <li key={i}>
       <b>{x.name}</b><small>{x.count}× in „{x.playlist.name}“{x.versions ? ' · verschiedene Versionen' : ''}</small></li>)}</ul>}
     <div className="actions"><button className="pill glass" onClick={() => findDuplicates().then(setList)}>{list ? 'Erneut suchen' : 'Suchen'}</button></div>
+  </section>
+}
+
+// Bleibt beim Wechsel zur Vorschlagsansicht erhalten, damit nicht jedes Mal neu bei Spotify angefragt wird
+let inboxCache: SearchHit[] | null = null
+
+function InboxPanel({ onError, onPick }: { onError: (m: string) => void; onPick: (s: SearchHit) => void }) {
+  const [list, setList] = useState<SearchHit[] | null>(inboxCache)
+  const [busy, setBusy] = useState(false)
+  const show = (l: SearchHit[]) => { inboxCache = l; setList(l) }
+  const load = () => { setBusy(true); loadInbox().then(show, e => onError(e.message)).finally(() => setBusy(false)) }
+  const skip = (h: SearchHit) => { doneInbox(h.id); show(list!.filter(x => x !== h)) }
+  return <section className="panel glass">
+    <h2>Inbox</h2>
+    <p className="cap left">Zuletzt gehörte Songs, die in keiner deiner Playlists liegen. Antippen zum Einsortieren. Eine Spotify-Anfrage pro Laden.</p>
+    {list && !list.length && <p className="cap left">Alles einsortiert.</p>}
+    {list && !!list.length && <ul className="list">{list.map(h => <li key={h.id} className="inbox-item">
+      <CoverRow image={h.image} title={h.name} sub={h.artists.join(', ')} onClick={() => onPick(h)} />
+      <button className="never" aria-label="Überspringen" title="Überspringen" onClick={() => skip(h)}>✕</button>
+    </li>)}</ul>}
+    <div className="actions"><button className="pill glass hot" disabled={busy} onClick={load}>{busy ? 'Lade …' : list ? 'Neu laden' : 'Inbox laden'}</button></div>
   </section>
 }

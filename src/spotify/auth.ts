@@ -4,7 +4,7 @@ const SCOPES = [
   'playlist-read-private', 'playlist-read-collaborative',
   'playlist-modify-private', 'playlist-modify-public',
   'user-read-playback-state', 'user-modify-playback-state', 'user-read-currently-playing',
-  'streaming', 'user-read-private', 'user-read-email',
+  'streaming', 'user-read-private', 'user-read-email', 'user-read-recently-played',
 ].join(' ')
 
 export const redirectUri = () => location.origin + import.meta.env.BASE_URL

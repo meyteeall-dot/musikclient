@@ -123,7 +123,7 @@ export function App() {
             : <Playlists items={playlists} profiles={profiles} excluded={excluded} onOpen={setOpenId} />)
           : <div className="panel glass center"><p className="cap">Noch nicht mit Spotify verbunden.</p>
               <button className="pill glass hot" onClick={() => setTab('settings')}>Zu den Einstellungen</button></div>)}
-        {tab === 'tools' && <Tools onError={setError} />}
+        {tab === 'tools' && <Tools onError={setError} onAdded={load} />}
         {tab === 'player' && <Player onError={setError} />}
         {tab === 'settings' && <Settings loggedIn={!!loggedIn} onError={setError} onAiSaved={sync}
           onLogout={async () => { await logout(); setLoggedIn(false) }} />}
