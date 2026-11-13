@@ -29,7 +29,7 @@ export async function syncPlaylists(): Promise<SyncResult> {
       owner: p.owner?.display_name ?? p.owner?.id ?? '',
       ownedByMe: p.owner?.id === user.id,
       collaborative: !!p.collaborative,
-      image: p.images?.at(-1)?.url ?? p.images?.[0]?.url,
+      image: (p.images?.[1] ?? p.images?.[0])?.url,   // mittlere Größe: 60 px wären auf Retina unscharf
       total: p.items?.total ?? p.tracks?.total ?? 0, // seit Feb. 2026 heißt das Feld "items"
       tracksSnapshot: old?.tracksSnapshot,
     }

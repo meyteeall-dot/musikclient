@@ -2,7 +2,7 @@
    1) Farbwelt-Hintergrund per Shader in eine Textur, 2) auf den Schirm, 3) jedes .glass/.ind als Linse,
    die den Hintergrund physikalisch bricht. Linsen werden jedes Bild neu im DOM gesucht, damit React frei rendern kann.
    Ohne WebGL2 bleibt das CSS-Glas (Blur) aus theme.css. */
-import { GL_BG_FS, GL_FULL_VS, GL_LENS_FS, GL_LENS_VS } from './shaders'
+import { GL_BG_FS, GL_COVER_FS, GL_FULL_VS, GL_LENS_FS, GL_LENS_VS } from './shaders'
 
 export const THEMES = {
   color:     { name: 'Farbe',           bg: 0, glow: [1, .55, .22], sw: 'linear-gradient(135deg,#1a6bff,#9b46ff 55%,#ff8a3d)' },
@@ -106,8 +106,36 @@ export function initGlass(cv: HTMLCanvasElement) {
   }
   const pBg = prog(GL_FULL_VS, GL_BG_FS, ['uRes', 'uPar', 'uT', 'uHot', 'uTA', 'uTB', 'uTF', 'uGlow'])
   const pLens = prog(GL_LENS_VS, GL_LENS_FS, ['uRes', 'uR', 'uP', 'uDpr', 'uBg', 'uW', 'uM', 'uNR[0]', 'uNJ[0]', 'uNQ[0]', 'uNG[0]', 'uNN', 'uK', 'uSelf', 'uNB', 'uGlowC', 'uLight', 'uClip', 'uGlass', 'uTint'])
-  if (!pBg || !pLens) return
-  const U = pLens.u, UB = pBg.u
+  const pCov = prog(GL_LENS_VS, GL_COVER_FS, ['uRes', 'uR', 'uM', 'uRad', 'uClip', 'uDpr', 'uImg', 'uScale', 'uA'])
+  if (!pBg || !pLens || !pCov) return
+  const U = pLens.u, UB = pBg.u, UC = pCov.u
+
+  // Cover-Texturen je Bild-URL. Klappt das Laden nicht (CORS), bleibt das normale <img> sichtbar.
+  // shortcut: Texturen werden nie freigegeben; erst bei sehr vielen verschiedenen Covers (lange Suchsitzungen) aufräumen.
+  const covers = new Map<string, { t: WebGLTexture | null; w: number; h: number; ok: boolean | null }>()
+  function coverTex(url: string) {
+    let e = covers.get(url)
+    if (!e) {
+      const c = e = { t: null as WebGLTexture | null, w: 1, h: 1, ok: null as boolean | null }
+      covers.set(url, c)
+      const im = new Image(); im.crossOrigin = 'anonymous'
+      im.onload = () => {
+        try {
+          const t = gl!.createTexture()!
+          gl!.bindTexture(gl!.TEXTURE_2D, t)
+          gl!.texImage2D(gl!.TEXTURE_2D, 0, gl!.RGBA, gl!.RGBA, gl!.UNSIGNED_BYTE, im)
+          gl!.generateMipmap(gl!.TEXTURE_2D)   // großes Bild klein gezeichnet: ohne Mipmaps flimmert es
+          gl!.texParameteri(gl!.TEXTURE_2D, gl!.TEXTURE_MIN_FILTER, gl!.LINEAR_MIPMAP_LINEAR)
+          gl!.texParameteri(gl!.TEXTURE_2D, gl!.TEXTURE_WRAP_S, gl!.CLAMP_TO_EDGE)
+          gl!.texParameteri(gl!.TEXTURE_2D, gl!.TEXTURE_WRAP_T, gl!.CLAMP_TO_EDGE)
+          Object.assign(c, { t, w: im.naturalWidth, h: im.naturalHeight, ok: true })
+        } catch { c.ok = false }
+      }
+      im.onerror = () => { c.ok = false }
+      im.src = url
+    }
+    return e
+  }
 
   const tex = gl.createTexture(), fb = gl.createFramebuffer()
   gl.bindTexture(gl.TEXTURE_2D, tex)
@@ -203,6 +231,34 @@ export function initGlass(cv: HTMLCanvasElement) {
     gl!.uniform1f(UB.uT, RM ? 0 : now / 1000); gl!.uniform1f(UB.uHot, 0); gl!.uniform1i(UB.uTA, tA); gl!.uniform1i(UB.uTB, tB)
     gl!.uniform1f(UB.uTF, tF * tF * (3 - 2 * tF)); gl!.uniform3f(UB.uGlow, glow[0], glow[1], glow[2])
     gl!.drawArrays(gl!.TRIANGLES, 0, 3)
+
+    // Cover ins Hintergrundbild: liegen damit unter dem Glas und werden von den Linsen mitgebrochen
+    gl!.enable(gl!.BLEND)
+    gl!.useProgram(pCov!.p)
+    gl!.uniform2f(UC.uRes, cv.width, cv.height); gl!.uniform1f(UC.uM, 0); gl!.uniform1f(UC.uDpr, dpr); gl!.uniform1i(UC.uImg, 0)
+    gl!.activeTexture(gl!.TEXTURE0)
+    const coverClip = new Map<Element, DOMRect>()
+    for (const el of document.querySelectorAll<HTMLElement>('.cover[data-src]')) {
+      const e = coverTex(el.dataset.src!)
+      if (e.ok === false) { el.dataset.gl = '0'; continue }
+      if (!e.t || el.closest('[data-hide]')) continue
+      const r = el.getBoundingClientRect()
+      if (r.width < 2 || r.bottom < 0 || r.top > h) continue
+      const sc = el.closest('.scroll')
+      let c = sc && coverClip.get(sc); if (sc && !c) { c = sc.getBoundingClientRect(); coverClip.set(sc, c) }
+      const box = r.width / r.height, img = e.w / e.h
+      const glass = el.closest<HTMLElement>('.glass'), a = glass ? lensOf(glass).a : 1   // blendet mit seinem Glas ein
+      gl!.bindTexture(gl!.TEXTURE_2D, e.t)
+      gl!.uniform4f(UC.uR, (r.left + r.width / 2) * dpr, (r.top + r.height / 2) * dpr, r.width / 2 * dpr, r.height / 2 * dpr)
+      gl!.uniform1f(UC.uRad, (parseFloat(getComputedStyle(el).borderTopLeftRadius) || 0) * dpr)
+      gl!.uniform2f(UC.uScale, img > box ? box / img : 1, img > box ? 1 : img / box)
+      gl!.uniform4f(UC.uClip, c ? c.left * dpr : -1e5, c ? c.top * dpr : -1e5, c ? c.right * dpr : 1e5, c ? c.bottom * dpr : 1e5)
+      gl!.uniform1f(UC.uA, a * a * (3 - 2 * a))
+      gl!.drawArrays(gl!.TRIANGLES, 0, 6)
+      if (el.dataset.gl !== '1') el.dataset.gl = '1'
+    }
+    gl!.disable(gl!.BLEND)
+
     gl!.bindFramebuffer(gl!.READ_FRAMEBUFFER, fb); gl!.bindFramebuffer(gl!.DRAW_FRAMEBUFFER, null)
     gl!.blitFramebuffer(0, 0, cv.width, cv.height, 0, 0, cv.width, cv.height, gl!.COLOR_BUFFER_BIT, gl!.NEAREST)
     gl!.bindFramebuffer(gl!.FRAMEBUFFER, null); gl!.viewport(0, 0, cv.width, cv.height)

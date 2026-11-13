@@ -303,3 +303,20 @@ void main(){
   o = vec4(col, cov * uP.z * clipA);
 }`;
 
+
+/* Cover unter dem Glas: wird ins Hintergrundbild gezeichnet, bevor die Linsen es brechen.
+   Abgerundete Ecken (uRad), Bildausschnitt wie object-fit: cover (uScale), Scroll-Verlauf oben/unten wie das Glas. */
+export const GL_COVER_FS = `#version 300 es
+precision highp float;
+uniform vec4 uR; uniform float uRad; uniform vec4 uClip; uniform float uDpr; uniform sampler2D uImg; uniform vec2 uScale; uniform float uA;
+in vec2 vP; out vec4 o;
+void main(){
+  float cd = min(vP.y - uClip.y, uClip.w - vP.y);
+  if (cd <= 0.) discard;
+  vec2 q = abs(vP - uR.xy) - uR.zw + uRad;
+  float d = length(max(q, 0.)) + min(max(q.x, q.y), 0.) - uRad;
+  float a = 1. - smoothstep(-.75 * uDpr, .75 * uDpr, d);
+  if (a <= 0.) discard;
+  vec2 uv = (vP - uR.xy) / (2. * uR.zw) * uScale + .5;
+  o = vec4(texture(uImg, uv).rgb, a * smoothstep(0., 14. * uDpr, cd) * uA);
+}`;

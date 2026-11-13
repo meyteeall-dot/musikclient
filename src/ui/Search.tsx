@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { choose, suggest, type SuggestResult } from '../features/suggest'
 import { searchTracks, type SearchHit } from '../spotify/api'
+import { Cover, CoverRow } from './Cover'
 
 /** Song suchen → 3 Playlist-Vorschläge mit Begründung → Hinzufügen. */
 export function Search({ onError, onAdded }: { onError: (m: string) => void; onAdded: () => void }) {
@@ -30,21 +31,10 @@ export function Search({ onError, onAdded }: { onError: (m: string) => void; onA
   }
 
   if (song) return <div className="panels">
-    <div className="row glass">
-      {song.image ? <img src={song.image} alt="" /> : <span className="ph" />}
-      <span className="meta"><b>{song.name}</b><small>{song.artists.join(', ')}{song.year ? ` · ${song.year}` : ''}</small></span>
-    </div>
+    <CoverRow big image={song.image} title={song.name} sub={`${song.artists.join(', ')}${song.year ? ` · ${song.year}` : ''}`} />
     {!res && <p className="cap">Suche passende Playlists …</p>}
-    {res?.suggestions.map((s, i) => <section key={s.playlist.id} className="panel glass sugg">
-      <div className="sugg-head">
-        {s.playlist.image ? <img src={s.playlist.image} alt="" /> : <span className="ph" />}
-        <b>{s.playlist.name}</b>
-      </div>
-      <p>{s.reason}</p>
-      <button className={'pill glass' + (added[s.playlist.id] ? '' : ' hot')} disabled={!!added[s.playlist.id]} onClick={() => add(i)}>
-        {added[s.playlist.id] === 'done' ? 'Hinzugefügt ✓' : added[s.playlist.id] ? 'Füge hinzu …' : 'Hinzufügen'}
-      </button>
-    </section>)}
+    {res?.suggestions.map((s, i) => <Sugg key={s.playlist.id} image={s.playlist.image} name={s.playlist.name} reason={s.reason}
+      state={added[s.playlist.id]} onAdd={() => add(i)} />)}
     {res && !res.suggestions.length && <p className="cap">Keine eigene Playlist gefunden, in die der Song noch passt.</p>}
     {res?.contains.length ? <p className="cap">Schon drin in: {res.contains.map(p => p.name).join(', ')}</p> : null}
     {res && <p className="cap">Vorschläge von: {res.provider}</p>}
@@ -55,10 +45,18 @@ export function Search({ onError, onAdded }: { onError: (m: string) => void; onA
     <input className="field" type="search" enterKeyHint="search" placeholder="Song oder Künstler suchen"
       value={q} onChange={e => setQ(e.target.value)} autoCorrect="off" spellCheck={false} />
     <ul className="list">
-      {hits.map(h => <li key={h.id}><button className="row glass" onClick={() => pick(h)}>
-        {h.image ? <img src={h.image} alt="" loading="lazy" /> : <span className="ph" />}
-        <span className="meta"><b>{h.name}</b><small>{h.artists.join(', ')}{h.year ? ` · ${h.year}` : ''}</small></span>
-      </button></li>)}
+      {hits.map(h => <li key={h.id}><CoverRow image={h.image} title={h.name} onClick={() => pick(h)}
+        sub={`${h.artists.join(', ')}${h.year ? ` · ${h.year}` : ''}`} /></li>)}
     </ul>
   </div>
+}
+
+function Sugg(p: { image?: string; name: string; reason: string; state?: 'busy' | 'done'; onAdd: () => void }) {
+  return <section className="panel glass sugg">
+    <div className="sugg-head"><Cover url={p.image} /><b>{p.name}</b></div>
+    <p>{p.reason}</p>
+    <button className={'pill glass' + (p.state ? '' : ' hot')} disabled={!!p.state} onClick={p.onAdd}>
+      {p.state === 'done' ? 'Hinzugefügt ✓' : p.state ? 'Füge hinzu …' : 'Hinzufügen'}
+    </button>
+  </section>
 }

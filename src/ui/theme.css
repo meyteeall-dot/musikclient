@@ -18,7 +18,10 @@
 html,body,#root{height:100%;margin:0}
 body{background:radial-gradient(120% 80% at 50% 0%,var(--bg-2),var(--bg) 60%);background-color:var(--bg);
   color:var(--ink);font-family:var(--f-body);overflow:hidden;overscroll-behavior:none;
-  -webkit-user-select:none;user-select:none;touch-action:none}   /* Wischen gehört dem eigenen Scrollen */
+  -webkit-user-select:none;user-select:none;touch-action:none;-webkit-touch-callout:none}   /* Wischen gehört dem eigenen Scrollen */
+/* iPad: Druck+Ziehen auf Bild/Knopf startet sonst System-Drag&Drop bzw. eigene Gesten und bricht das Scrollen ab */
+button,img,.glass{touch-action:none;-webkit-touch-callout:none}
+img{-webkit-user-drag:none;user-drag:none}
 button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
 :focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 
@@ -129,8 +132,15 @@ svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.7;stroke
 .gs input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer;touch-action:none}
 
 .list{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
-.row{display:flex;align-items:center;gap:12px;padding:10px;border-radius:24px}
-.row img,.row .ph{width:48px;height:48px;border-radius:14px;object-fit:cover;flex:none;background:rgba(255,255,255,.08)}
+.row{display:flex;align-items:center;gap:14px;padding:12px;border-radius:28px}
+/* Cover: konzentrisch zur Zeile (28 − 12 = 16). Mit WebGL liegt es unter dem Glas (engine.ts), hier nur Platzhalter */
+.cover{position:relative;flex:none;width:56px;height:56px;border-radius:16px;overflow:hidden;background:rgba(255,255,255,.08)}
+.cover img{display:block;width:100%;height:100%;object-fit:cover;pointer-events:none}
+.gl .cover[data-gl="1"]{background:none}
+.gl .cover[data-gl="1"] img{visibility:hidden}
+.row.big{padding:14px;border-radius:38px;gap:16px}
+.row.big .cover{width:104px;height:104px;border-radius:24px}
+.row.big b{font-size:19px;font-weight:800;white-space:normal}
 .row .meta{min-width:0;display:flex;flex-direction:column;gap:2px}
 .row b{font-weight:700;font-size:14.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .row small{color:var(--muted);font-size:12px}
@@ -146,7 +156,6 @@ svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.7;stroke
 .tracks small{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sugg{gap:10px}
 .sugg-head{display:flex;align-items:center;gap:12px}
-.sugg-head img,.sugg-head .ph{width:44px;height:44px;border-radius:12px;object-fit:cover;flex:none;background:rgba(255,255,255,.08)}
 .sugg-head b{font-weight:800;font-size:16px}
 .sugg p{margin:0;font-size:14px;line-height:1.45}
 .sugg .pill{align-self:flex-start}
@@ -168,5 +177,9 @@ input[type=search]{-webkit-appearance:none;appearance:none}
 .tab[aria-selected="true"],.gl .tab[aria-selected="true"]{color:var(--accent-hot)}
 .tab[aria-selected="true"] svg{filter:drop-shadow(0 0 6px rgba(var(--acc),.55))}
 .gl .ind{background:none;box-shadow:none}
+.tabs.drag .ind{transition:scale .12s ease-out}
+.tabs.drag .tab[aria-selected="true"]{color:var(--muted)}
+.tabs.drag .tab.near,.gl .tabs.drag .tab.near{color:var(--accent-hot)}
+.ind{transition:translate .6s cubic-bezier(.25,1.12,.4,1),scale .45s var(--spring)}
 
 @media (prefers-reduced-motion:reduce){.aura,.brand .dot{animation:none}.aura{translate:none}}

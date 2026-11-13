@@ -6,6 +6,7 @@ import { buildProfiles } from '../features/profiles'
 import { NotLoggedIn } from '../spotify/api'
 import { accessToken, handleRedirect, login, logout, redirectUri } from '../spotify/auth'
 import { glassScroll } from './glass/scroll'
+import { CoverRow } from './Cover'
 import { PlaylistView } from './PlaylistView'
 import { Search } from './Search'
 import { applyGlass, applyTheme, GLASS_DEFAULTS, GLASS_SLIDERS, THEMES, type GlassValues, type ThemeId } from './glass/engine'
@@ -116,15 +117,7 @@ export function App() {
           onLogout={async () => { await logout(); setLoggedIn(false) }} />}
       </Scroll>
 
-      <nav className="tabs glass" role="tablist" style={{ '--n': TABS.length, '--i': TABS.indexOf(tab) } as React.CSSProperties}>
-        <span className="ind" />
-        <TabBtn on={tab === 'search'} onClick={() => setTab('search')} label="Suche"
-          icon={<><circle cx="11" cy="11" r="6.5" /><path d="M16 16l4.5 4.5" /></>} />
-        <TabBtn on={tab === 'playlists'} onClick={() => { setTab('playlists'); setOpenId(null) }} label="Playlists"
-          icon={<path d="M4 6h12M4 12h12M4 18h8M18 16v-9l3-1" />} />
-        <TabBtn on={tab === 'settings'} onClick={() => setTab('settings')} label="Einstellungen"
-          icon={<><path d="M4 8h9M17 8h3M4 16h3M11 16h9" /><circle cx="15" cy="8" r="2" /><circle cx="9" cy="16" r="2" /></>} />
-      </nav>
+      <Tabs tab={tab} onPick={t => { setTab(t); setOpenId(null) }} />
     </div>
   )
 }
@@ -135,22 +128,61 @@ function Scroll({ children }: { children: React.ReactNode }) {
   return <main className="scroll" ref={ref}><div className="sc">{children}</div></main>
 }
 
-function TabBtn(p: { on: boolean; onClick: () => void; label: string; icon: React.ReactNode }) {
-  return <button className="tab" role="tab" aria-selected={p.on} onClick={p.onClick}>
-    <svg viewBox="0 0 24 24">{p.icon}</svg>{p.label}</button>
+const TAB_UI: Record<Tab, [string, React.ReactNode]> = {
+  search: ['Suche', <><circle cx="11" cy="11" r="6.5" /><path d="M16 16l4.5 4.5" /></>],
+  playlists: ['Playlists', <path d="M4 6h12M4 12h12M4 18h8M18 16v-9l3-1" />],
+  settings: ['Einstellungen', <><path d="M4 8h9M17 8h3M4 16h3M11 16h9" /><circle cx="15" cy="8" r="2" /><circle cx="9" cy="16" r="2" /></>],
+}
+
+/** Tableiste mit gleitender Glaslinse (aus Druckpunkt): antippen oder die Linse seitlich ziehen. */
+function Tabs({ tab, onPick }: { tab: Tab; onPick: (t: Tab) => void }) {
+  const nav = useRef<HTMLElement>(null), ind = useRef<HTMLSpanElement>(null)
+  const swp = useRef<{ id: number; x0: number; x: number; t: number; v: number; on: boolean; near: number } | null>(null)
+  const [near, setNear] = useState(-1)
+  const n = TABS.length
+
+  const down = (e: React.PointerEvent) => { swp.current = { id: e.pointerId, x0: e.clientX, x: e.clientX, t: e.timeStamp, v: 0, on: false, near: -1 } }
+  const move = (e: React.PointerEvent) => {
+    const s = swp.current, el = nav.current!
+    if (!s || e.pointerId !== s.id) return
+    if (!s.on) {
+      if (Math.abs(e.clientX - s.x0) < 8) return
+      s.on = true; el.setPointerCapture(e.pointerId); el.classList.add('drag')   // Capture: danach kein Klick auf einen Tab
+    }
+    const r = el.getBoundingClientRect(), iw = (r.width - 12 - (n - 1) * 4) / n
+    const pos = Math.max(0, Math.min(n - 1, (e.clientX - r.left - 6 - iw / 2) / (iw + 4)))
+    const dt = Math.max(1, e.timeStamp - s.t)
+    s.v = s.v * .6 + (e.clientX - s.x) / dt * .4; s.x = e.clientX; s.t = e.timeStamp
+    const st = Math.min(.35, Math.abs(s.v) * .18)   // schnell gezogen: Linse dehnt sich in Zugrichtung
+    el.style.setProperty('--i', String(pos))
+    ind.current!.style.scale = `${1.08 + st} ${1.08 - st * .5}`
+    if (Math.round(pos) !== s.near) { s.near = Math.round(pos); setNear(s.near); navigator.vibrate?.(4) }
+  }
+  const end = (e: React.PointerEvent) => {
+    const s = swp.current
+    if (!s || e.pointerId !== s.id) return
+    swp.current = null
+    if (!s.on) return
+    nav.current!.classList.remove('drag'); ind.current!.style.scale = ''
+    nav.current!.style.setProperty('--i', String(s.near))   // React setzt --i nur bei geändertem Tab neu
+    setNear(-1); onPick(TABS[s.near])
+  }
+
+  return <nav ref={nav} className="tabs glass" role="tablist" style={{ '--n': n, '--i': TABS.indexOf(tab) } as React.CSSProperties}
+    onPointerDown={down} onPointerMove={move} onPointerUp={end} onPointerCancel={end}>
+    <span className="ind" ref={ind} />
+    {TABS.map((t, i) => <button key={t} className={'tab' + (i === near ? ' near' : '')} role="tab" aria-selected={t === tab} onClick={() => onPick(t)}>
+      <svg viewBox="0 0 24 24">{TAB_UI[t][1]}</svg>{TAB_UI[t][0]}</button>)}
+  </nav>
 }
 
 function Playlists({ items, profiles, onOpen }: { items: Playlist[]; profiles: Map<string, Profile>; onOpen: (id: string) => void }) {
   return <ul className="list">
     {items.map(p => {
       const pr = profiles.get(p.id)
-      return <li key={p.id}><button className="row glass" onClick={() => onOpen(p.id)}>
-        {p.image ? <img src={p.image} alt="" loading="lazy" /> : <span className="ph" />}
-        <span className="meta"><b>{p.name}</b>
-          <small>{p.total} Songs · {p.ownedByMe ? 'eigene' : p.owner}{p.tracksBlocked ? ' · Tracks gesperrt' : ''}</small>
-          {pr && <small className="prof">{[pr.genres.slice(0, 2).join(', '), pr.era, pr.mood].filter(Boolean).join(' · ')}</small>}
-        </span>
-      </button></li>
+      return <li key={p.id}><CoverRow image={p.image} title={p.name} onClick={() => onOpen(p.id)}
+        sub={`${p.total} Songs · ${p.ownedByMe ? 'eigene' : p.owner}${p.tracksBlocked ? ' · Tracks gesperrt' : ''}`}
+        extra={pr && <small className="prof">{[pr.genres.slice(0, 2).join(', '), pr.era, pr.mood].filter(Boolean).join(' · ')}</small>} /></li>
     })}
   </ul>
 }

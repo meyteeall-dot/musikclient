@@ -48,7 +48,7 @@ export type SearchHit = Track & { image?: string }
 export const searchTracks = async (q: string): Promise<SearchHit[]> =>
   (await api(`/search?type=track&limit=10&q=${encodeURIComponent(q)}`)).tracks.items
     .filter((t: any) => t?.id)
-    .map((t: any) => ({ ...toTrack(t), image: t.album?.images?.at(-1)?.url }))
+    .map((t: any) => ({ ...toTrack(t), image: (t.album?.images?.[1] ?? t.album?.images?.[0])?.url }))
 
 export const addToPlaylist = (playlistId: string, uri: string) =>
   api(`/playlists/${playlistId}/items`, { method: 'POST', body: JSON.stringify({ uris: [uri] }) })

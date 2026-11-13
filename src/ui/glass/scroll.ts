@@ -21,7 +21,7 @@ export function glassScroll(box: HTMLElement) {
 
   const down = (e: PointerEvent) => {
     moved = false
-    if ((e.target as Element).closest('input, textarea, select, .gs')) return   // Regler und Felder behalten ihre Gesten
+    if ((e.target as Element).closest('input, textarea, select, .gs, .tabs')) return   // Regler und Felder behalten ihre Gesten
     drag = { id: e.pointerId, y0: e.clientY, s0: y, last: e.clientY, t: e.timeStamp }; v = 0
   }
   const move = (e: PointerEvent) => {
