@@ -1,4 +1,4 @@
-import { ApiError, getAll, me } from '../spotify/api'
+import { ApiError, getAll, me, toTrack } from '../spotify/api'
 import { db, kv, type Playlist, type Track } from './db'
 
 export interface SyncResult { added: number; changed: number; removed: number; total: number }
@@ -60,11 +60,7 @@ export async function syncTracks(onProgress?: (done: number, todo: number) => vo
       for (const r of raw) {
         const t = r.item ?? r.track
         if (!t?.id || t.type !== 'track') continue   // lokale Dateien, Podcast-Folgen
-        tracks.push({
-          id: t.id, uri: t.uri, name: t.name,
-          artists: t.artists.map((a: any) => a.name), artistIds: t.artists.map((a: any) => a.id),
-          album: t.album?.name ?? '', year: parseInt(t.album?.release_date) || undefined,
-        })
+        tracks.push(toTrack(t))
       }
       await d.put('tracks', { id: p.id, tracks })
       p.tracksBlocked = false

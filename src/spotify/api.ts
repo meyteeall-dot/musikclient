@@ -1,3 +1,4 @@
+import type { Track } from '../data/db'
 import { accessToken } from './auth'
 
 const BASE = 'https://api.spotify.com/v1'
@@ -33,5 +34,23 @@ export async function getAll<T>(path: string): Promise<T[]> {
   }
   return out
 }
+
+/** Spotify-Track-Objekt → schlanker Track für die lokale Datenbank. */
+export const toTrack = (t: any): Track => ({
+  id: t.id, uri: t.uri, name: t.name,
+  artists: t.artists.map((a: any) => a.name), artistIds: t.artists.map((a: any) => a.id),
+  album: t.album?.name ?? '', year: parseInt(t.album?.release_date) || undefined,
+})
+
+export type SearchHit = Track & { image?: string }
+
+// Entwicklungsmodus seit Feb. 2026: höchstens 10 Treffer pro Suche
+export const searchTracks = async (q: string): Promise<SearchHit[]> =>
+  (await api(`/search?type=track&limit=10&q=${encodeURIComponent(q)}`)).tracks.items
+    .filter((t: any) => t?.id)
+    .map((t: any) => ({ ...toTrack(t), image: t.album?.images?.at(-1)?.url }))
+
+export const addToPlaylist = (playlistId: string, uri: string) =>
+  api(`/playlists/${playlistId}/items`, { method: 'POST', body: JSON.stringify({ uris: [uri] }) })
 
 export const me = () => api<{ id: string; display_name: string }>('/me')

@@ -134,6 +134,15 @@ svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.7;stroke
 .row b{font-weight:700;font-size:14.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .row small{color:var(--muted);font-size:12px}
 .row small.prof,.gl .row small.prof{color:var(--accent-hot);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.list button.row{width:100%;text-align:left}
+.sugg{gap:10px}
+.sugg-head{display:flex;align-items:center;gap:12px}
+.sugg-head img,.sugg-head .ph{width:44px;height:44px;border-radius:12px;object-fit:cover;flex:none;background:rgba(255,255,255,.08)}
+.sugg-head b{font-weight:800;font-size:16px}
+.sugg p{margin:0;font-size:14px;line-height:1.45}
+.sugg .pill{align-self:flex-start}
+.actions.center{justify-content:center}
+input[type=search]{-webkit-appearance:none;appearance:none}
 .kfield{display:flex;flex-direction:column;gap:6px}
 
 /* ---------- Tabbar: gleitende Glas-Linse ---------- */

@@ -6,14 +6,15 @@ import { buildProfiles } from '../features/profiles'
 import { NotLoggedIn } from '../spotify/api'
 import { accessToken, handleRedirect, login, logout, redirectUri } from '../spotify/auth'
 import { glassScroll } from './glass/scroll'
+import { Search } from './Search'
 import { applyGlass, applyTheme, GLASS_DEFAULTS, GLASS_SLIDERS, THEMES, type GlassValues, type ThemeId } from './glass/engine'
 
-type Tab = 'playlists' | 'settings'
-const TABS: Tab[] = ['playlists', 'settings']
+type Tab = 'search' | 'playlists' | 'settings'
+const TABS: Tab[] = ['search', 'playlists', 'settings']
 const SYNC_EVERY = 15 * 60 * 1000
 
 export function App() {
-  const [tab, setTab] = useState<Tab>('playlists')
+  const [tab, setTab] = useState<Tab>('search')
   const [loggedIn, setLoggedIn] = useState<boolean | null>(null)
   const [playlists, setPlaylists] = useState<Playlist[]>([])
   const [profiles, setProfiles] = useState(new Map<string, Profile>())
@@ -98,6 +99,10 @@ export function App() {
       {error && <div className="panel glass error" onClick={() => setError('')}>{error}</div>}
 
       <Scroll key={tab}>
+        {tab === 'search' && (loggedIn
+          ? <Search onError={setError} onAdded={load} />
+          : <div className="panel glass center"><p className="cap">Noch nicht mit Spotify verbunden.</p>
+              <button className="pill glass hot" onClick={() => setTab('settings')}>Zu den Einstellungen</button></div>)}
         {tab === 'playlists' && (loggedIn
           ? <Playlists items={playlists} profiles={profiles} />
           : <div className="panel glass center"><p className="cap">Noch nicht mit Spotify verbunden.</p>
@@ -108,6 +113,8 @@ export function App() {
 
       <nav className="tabs glass" role="tablist" style={{ '--n': TABS.length, '--i': TABS.indexOf(tab) } as React.CSSProperties}>
         <span className="ind" />
+        <TabBtn on={tab === 'search'} onClick={() => setTab('search')} label="Suche"
+          icon={<><circle cx="11" cy="11" r="6.5" /><path d="M16 16l4.5 4.5" /></>} />
         <TabBtn on={tab === 'playlists'} onClick={() => setTab('playlists')} label="Playlists"
           icon={<path d="M4 6h12M4 12h12M4 18h8M18 16v-9l3-1" />} />
         <TabBtn on={tab === 'settings'} onClick={() => setTab('settings')} label="Einstellungen"
