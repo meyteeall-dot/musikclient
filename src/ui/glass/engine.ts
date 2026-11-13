@@ -105,7 +105,7 @@ export function initGlass(cv: HTMLCanvasElement) {
     return { p, u: Object.fromEntries(names.map(n => [n, gl.getUniformLocation(p, n)])) }
   }
   const pBg = prog(GL_FULL_VS, GL_BG_FS, ['uRes', 'uPar', 'uT', 'uHot', 'uTA', 'uTB', 'uTF', 'uGlow'])
-  const pLens = prog(GL_LENS_VS, GL_LENS_FS, ['uRes', 'uR', 'uP', 'uDpr', 'uBg', 'uW', 'uM', 'uNR[0]', 'uNJ[0]', 'uNQ[0]', 'uNG[0]', 'uNN', 'uK', 'uSelf', 'uNB', 'uGlowC', 'uLight', 'uClip', 'uGlass', 'uTint'])
+  const pLens = prog(GL_LENS_VS, GL_LENS_FS, ['uRes', 'uR', 'uP', 'uDpr', 'uBg', 'uW', 'uM', 'uNR[0]', 'uNJ[0]', 'uNQ[0]', 'uNG[0]', 'uNN', 'uK', 'uSelf', 'uNB', 'uGlowC', 'uLight', 'uClip', 'uGlass', 'uTint', 'uCov', 'uCovR'])
   const pCov = prog(GL_LENS_VS, GL_COVER_FS, ['uRes', 'uR', 'uM', 'uRad', 'uClip', 'uDpr', 'uImg', 'uScale', 'uA'])
   if (!pBg || !pLens || !pCov) return
   const U = pLens.u, UB = pBg.u, UC = pCov.u
@@ -291,6 +291,12 @@ export function initGlass(cv: HTMLCanvasElement) {
       NQ.set([rad * dpr, S, sigOf(L, hw, hh) * dpr, bev * dpr]); NG.set([cx * dpr, cy * dpr, L.g, 0])
       gl!.uniform4fv(U['uNR[0]'], NR); gl!.uniform4fv(U['uNJ[0]'], NJ); gl!.uniform4fv(U['uNQ[0]'], NQ); gl!.uniform4fv(U['uNG[0]'], NG)
       const a = L.a * L.a * (3 - 2 * L.a) * (el.dataset.dim ? .45 : 1)
+      const cov = el.querySelector<HTMLElement>('.cover[data-gl="1"]')   // Cover unter diesem Glas: dort kaum Brechung
+      if (cov) {
+        const q = cov.getBoundingClientRect()
+        gl!.uniform4f(U.uCov, (q.left + q.width / 2) * dpr, (q.top + q.height / 2) * dpr, q.width / 2 * dpr, q.height / 2 * dpr)
+        gl!.uniform1f(U.uCovR, (parseFloat(getComputedStyle(cov).borderTopLeftRadius) || 0) * dpr)
+      } else gl!.uniform4f(U.uCov, 0, 0, 0, 0)
       gl!.uniform4f(U.uR, cx * dpr, cy * dpr, hw * dpr, hh * dpr)
       gl!.uniform3f(U.uP, rad * dpr, bev * dpr, a)
       const sc = el.parentElement?.closest('.scroll')   // Scrollbereich: außerhalb kein Glas, am Rand weicher Verlauf

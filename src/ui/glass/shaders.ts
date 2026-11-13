@@ -175,6 +175,7 @@ uniform vec2 uRes; uniform vec4 uR; uniform vec3 uP; uniform float uDpr; uniform
 uniform vec4 uW;    // Welle: Ursprung relativ zur Mitte (xy), Radius der Front (z), Stärke (w)
 uniform vec4 uGlass; uniform float uTint;   // Regler: Lichtbrechung, Milchglas, Regenbogen, Glanz; Färbung
 uniform vec4 uClip; // Scrollbereich (links, oben, rechts, unten): außerhalb kein Glas, am Rand 14 px Verlauf
+uniform vec4 uCov; uniform float uCovR;   // Cover unter diesem Glas (Mitte, halbe Größe; z <= 0: keins), Eckenradius
 // Index 0 ist dieses Glas, danach die Nachbarn, mit denen es verschmelzen kann.
 uniform vec4 uNR[8];  // Mitte, halbe Größe
 uniform vec4 uNJ[8];  // Zug: Anker relativ zur Mitte (xy), Verschiebung (zw)
@@ -203,6 +204,12 @@ float box(vec2 p){
   for (int i = 1; i < uNN; i++) d = smink(d, sdN(p, i), uK);
   for (int j = 0; j < uNB; j++) d = smink(d, seg(p, uBA[j]) - uBR[j].x, uBR[j].y);
   return d;
+}
+// 1 über dem Cover und in 14 px Saum darum: dort bricht das Glas kaum, damit das Cover seine Form behält
+float covMask(){
+  if (uCov.z <= 0.) return 0.;
+  vec2 q = abs(vP - uCov.xy) - uCov.zw + uCovR;
+  return 1. - smoothstep(0., 14. * uDpr, length(max(q, 0.)) + min(max(q.x, q.y), 0.) - uCovR);
 }
 vec3 bgAt(vec2 p){ return texture(uBg, vec2(p.x / uRes.x, 1. - p.y / uRes.y)).rgb; }
 // Spektrum: Gewicht einer Wellenlänge t (0 = Rot … 1 = Violett) je Farbkanal; 7 Stützstellen addieren sich zu Weiß
@@ -247,7 +254,8 @@ void main(){
   vec2 tilt = n2 * k + dome * x + rp / max(rr, 1.) * wave * smoothstep(0., .4, x);
   vec3 N = normalize(vec3(tilt, sqrt(max(1. - k * k, 0.)) + .015));
 
-  float T = B * 1.6 * (1. - .5 * bf) * uGlass.x, lim = B * 2.6;   // im Hals weichere Brechung; Regler Lichtbrechung
+  float cm = covMask();
+  float T = B * 1.6 * (1. - .5 * bf) * uGlass.x * (1. - .9 * cm), lim = B * 2.6;   // im Hals weichere Brechung; Regler Lichtbrechung
   // Spektrale Dispersion: jede Wellenlänge bricht anders (Rot schwach, Violett stark). Auf gleichmäßigen Flächen
   // ergeben sie zusammen wieder Weiß, an Kanten im Bild fächern sie zum Regenbogen auf.
   vec3 SPW = vec3(0.);
@@ -257,7 +265,7 @@ void main(){
   // Fächer höchstens 8 px breit: sonst werden die 7 Wellenlängen zu 7 versetzten Kopien (Treppenstufen) statt Verlauf
   vec2 oc = (o0 + o1) * .5, od = (o1 - o0) * .5; float sl = length(od) * 2.;
   if (sl > 8. * uDpr) od *= 8. * uDpr / sl;
-  od *= uGlass.z;   // Regler Regenbogen
+  od *= uGlass.z * (1. - cm);   // Regler Regenbogen; über dem Cover keine Farbsäume
   o0 = oc - od; o1 = oc + od;
   if (length(o1 - o0) < .75){ refr = bgAt(vP + (o0 + o1) * .5); }   // innen: Farben fallen zusammen, eine Abtastung reicht
   else {
@@ -276,7 +284,7 @@ void main(){
 
   float F = pow(1. - N.z, 3.);
   vec3 refl = bgAt(vP + n2 * (B * 2.2 + depth)) * mix(1.25, .97, uLight) + vec3(.55, .6, .7) * smoothstep(.2, -.9, n2.y) * .5 * (1. - uLight);
-  vec3 col = mix(refr, refl, min(1., F * mix(.8, .5, uLight) * (1. - .9 * bf) * uGlass.w));   // dünner Hals spiegelt kaum
+  vec3 col = mix(refr, refl, min(1., F * mix(.8, .5, uLight) * (1. - .9 * bf) * uGlass.w * (1. - cm)));   // dünner Hals spiegelt kaum
 
   vec2 L = normalize(vec2(-.6, -.8));
   float up = max(dot(n2, L), 0.), dn = max(dot(n2, -L), 0.);
