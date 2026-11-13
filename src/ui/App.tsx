@@ -66,7 +66,8 @@ export function App() {
       await load()
       const ok = !!(await accessToken())
       setLoggedIn(ok)
-      if (ok) sync()
+      // Neuladen allein kostet keine Spotify-Anfragen: nur abgleichen, wenn der letzte Abgleich alt ist
+      if (ok && Date.now() - ((await kv.get<number>('lastSync')) ?? 0) > SYNC_EVERY) sync()
       else setTab('settings')
     })()
   }, [sync])

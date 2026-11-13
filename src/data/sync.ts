@@ -8,8 +8,8 @@ export interface SyncResult { added: number; changed: number; removed: number; h
  * Geänderte snapshot_id → Playlist gilt als "Tracks neu einlesen" (tracksSnapshot !== snapshot_id).
  */
 export async function syncPlaylists(): Promise<SyncResult> {
-  const user = await me()
-  await kv.set('user', user)
+  let user = await kv.get<{ id: string }>('user')   // Nutzer-ID ändert sich nicht: nur einmal abfragen
+  if (!user) await kv.set('user', user = await me())
   const remote = await getAll<any>('/me/playlists?limit=50')
   const d = await db
   const local = new Map((await d.getAll('playlists')).map(p => [p.id, p]))

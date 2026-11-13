@@ -13,7 +13,7 @@ export function Search({ onError, onAdded }: { onError: (m: string) => void; onA
 
   useEffect(() => {
     if (q.trim().length < 2) { setHits([]); return }
-    const id = setTimeout(() => searchTracks(q.trim()).then(setHits, e => onError(e.message)), 350)
+    const id = setTimeout(() => searchTracks(q.trim()).then(setHits, e => onError(e.message)), 600)
     return () => clearTimeout(id)
   }, [q])
 

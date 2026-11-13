@@ -71,4 +71,4 @@ export async function accessToken(force = false): Promise<string | null> {
   try { return (await refreshing).access } catch { await kv.del('tokens'); return null }
 }
 
-export const logout = () => kv.del('tokens')
+export const logout = async () => { await kv.del('tokens'); await kv.del('user') }   // anderes Konto: Nutzer-ID neu holen
