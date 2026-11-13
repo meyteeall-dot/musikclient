@@ -85,9 +85,11 @@ export async function play(body: { uris?: string[]; context_uri?: string; offset
 }
 
 const safe = (p: Promise<unknown>) => p.catch(e => { throw friendly(e) })
-export const pause = () => safe(cmd('PUT', '/me/player/pause'))
-export const resume = () => safe(cmd('PUT', '/me/player/play'))
-export const next = () => safe(cmd('POST', '/me/player/next'))
-export const previous = () => safe(cmd('POST', '/me/player/previous'))
+// Läuft der Ton im Browser, steuert das SDK selbst: keine Anfrage an die Web API, zählt nicht ins Spotify-Limit
+const local = (f: string, path: string, method = 'POST') => usesWebPlayer() ? sdk[f]() as Promise<void> : safe(cmd(method, path))
+export const pause = () => local('pause', '/me/player/pause', 'PUT')
+export const resume = () => local('resume', '/me/player/play', 'PUT')
+export const next = () => local('nextTrack', '/me/player/next')
+export const previous = () => local('previousTrack', '/me/player/previous')
 export const devices = async () => (await api<{ devices: Device[] }>('/me/player/devices')).devices.filter(d => d.id)
 export const transfer = (id: string) => safe(cmd('PUT', '/me/player', { device_ids: [id], play: true }))

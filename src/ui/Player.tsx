@@ -2,7 +2,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react'
 import * as P from '../spotify/player'
 import { Cover } from './Cover'
 
-const POLL_MS = 15_000   // Fernsteuerung: Zustand nur alle 15 s holen, solange der Player sichtbar ist (Spotify-Limit)
+const POLL_MS = 60_000   // Fernsteuerung: Zustand nur 1× pro Minute holen (plus nach jedem Befehl), solange der Player sichtbar ist – Spotify-Limit
 const fmt = (ms: number) => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`
 
 export function Player({ onError }: { onError: (m: string) => void }) {
