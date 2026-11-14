@@ -10,16 +10,35 @@ export const AI_DEFAULTS = { geminiModel: 'gemini-3.8-flash', groqModel: 'openai
 class AiError extends Error { constructor(public status: number, msg: string) { super(msg) } }
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
-/** POST mit Geduld bei kurzen Limits (429): wartet laut Anbieter, mind. 3/8/20 s, dann gibt er auf. */
+/** Wartezeit aus einer Limit-Antwort in ms: Header retry-after, Geminis retryDelay oder Text wie „try again in 7m30.5s“ / „retry in 26s“. */
+export function waitOf(r: { headers: { get(k: string): string | null } }, j: any, msg: string) {
+  const h = Number(r.headers.get('retry-after'))
+  if (h) return h * 1000
+  const delay = JSON.stringify(j?.error?.details ?? '').match(/"retryDelay":"([\d.]+)s"/)
+  if (delay) return +delay[1] * 1000
+  const t = msg.match(/(?:try again|retry) in ((?:[\d.]+(?:h|ms|m|s))+)/i)?.[1]
+  if (!t) return 0
+  let ms = 0
+  for (const [, n, u] of t.matchAll(/([\d.]+)(h|ms|m|s)/g)) ms += +n * { h: 3_600_000, m: 60_000, s: 1000, ms: 1 }[u as 'h']
+  return ms
+}
+
+/** POST mit Geduld bei kurzen Limits (429): wartet bis 30 s, sonst gleich weiter zum nächsten Anbieter. Nie ohne Ende. */
 async function post(url: string, headers: Record<string, string>, body: unknown) {
   for (let attempt = 0; ; attempt++) {
-    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) })
+    let r: Response
+    try {
+      r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body), signal: AbortSignal.timeout(90_000) })
+    } catch (e) {
+      throw new AiError(0, (e as Error).name === 'TimeoutError' ? 'keine Antwort nach 90 s' : 'nicht erreichbar')
+    }
     const j = await r.json().catch(() => ({}))
     if (r.ok) return j
     const msg = `${r.status} ${j.error?.message ?? ''}`.trim()
     if (r.status !== 429 || attempt >= 3) throw new AiError(r.status, msg)
-    const m = msg.match(/try again in ([\d.]+)(ms|s)/i)
-    const said = Number(r.headers.get('retry-after')) * 1000 || (m ? +m[1] * (m[2] === 's' ? 1000 : 1) : 0)
+    const said = waitOf(r, j, msg)
+    // Langes Limit (Minuten bis Stunden = Tageskontingent): nicht warten, der nächste Anbieter soll übernehmen
+    if (said > 30_000) throw new AiError(429, `Limit erreicht, wieder frei in ca. ${Math.ceil(said / 60_000)} Min.`)
     await sleep(Math.max(said, [3000, 8000, 20000][attempt]))
   }
 }

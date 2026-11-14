@@ -55,7 +55,7 @@ export function App() {
         try {
           const n = await buildProfiles((i, all) => all && setStatus(`Profile ${i}/${all}`))
           if (n) { setStatus('Profile aktuell'); await load() }
-        } catch (e) { await load(); setError((e as Error).message) }   // bereits fertige Stapel bleiben gespeichert
+        } catch (e) { await load(); setStatus('Profile unvollständig'); setError((e as Error).message) }   // fertige Stapel bleiben gespeichert, Rest beim nächsten Abgleich
       }
     } catch (e) {
       if (e instanceof NotLoggedIn) setLoggedIn(false)
