@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { lastAccuracy, measureAccuracy, type Accuracy } from '../features/accuracy'
+import { lastAccuracy, measureAccuracy, type Accuracy, type Step } from '../features/accuracy'
 import { doneInbox, loadInbox } from '../features/inbox'
 import { buildMix, createMix, type Mix } from '../features/mix'
 import { findDuplicates, type Dupe } from '../features/tools'
@@ -24,28 +24,37 @@ const pct = (a: number, n: number) => `${Math.round(a / n * 100)} %`
 
 function AccuracyPanel({ onError }: { onError: (m: string) => void }) {
   const [res, setRes] = useState<Accuracy | null>(null)
-  const [busy, setBusy] = useState<number | null>(null)
-  const N = 10
+  const [n, setN] = useState(10)
+  const [prog, setProg] = useState<{ done: number; total: number; steps: Step[] } | null>(null)
   useEffect(() => { lastAccuracy().then(r => r && setRes(r)) }, [])
   const run = async () => {
-    setBusy(0)
-    try { setRes(await measureAccuracy(N, setBusy)) } catch (e) { onError((e as Error).message) }
-    setBusy(null)
+    setProg({ done: 0, total: n, steps: [] })
+    try {
+      setRes(await measureAccuracy(n, (done, total, step) => setProg(p => ({ done, total, steps: step ? [...(p?.steps ?? []), step] : p?.steps ?? [] }))))
+    } catch (e) { onError((e as Error).message) }
+    setProg(null)
   }
   return <section className="panel glass">
     <h2>Trefferquote</h2>
-    <p className="cap left">Die App nimmt {N} zufällige Songs aus deinen Playlists, tut so, als wären sie neu, und prüft, ob sie die richtige Playlist vorschlägt. Kostet nur KI-Anfragen (≈ 2 pro Song), keine bei Spotify.</p>
-    {res && <div className="stats">
+    <p className="cap left">Die App nimmt zufällige Songs aus deinen Playlists (je Playlist höchstens einen), tut so, als wären sie neu, und prüft, ob sie die richtige Playlist vorschlägt. Kostet nur KI-Anfragen (≈ 2 pro Song), keine bei Spotify.</p>
+    {res && !prog && <div className="stats">
       <div><b>{pct(res.top1, res.n)}</b><small>auf Platz 1</small></div>
       <div><b>{pct(res.top3, res.n)}</b><small>unter den Top 3</small></div>
     </div>}
-    {res?.local && <p className="cap left">Ohne KI wären es {pct(res.local.top1, res.n)} auf Platz 1 und {pct(res.local.top3, res.n)} in den Top 3.</p>}
-    {res && <p className="cap left">{res.n} Songs · {res.provider} · {new Date(res.at).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' })}</p>}
-    {!!res?.misses.length && <details className="misses"><summary>Daneben ({res.misses.length})</summary>
+    {res?.local && !prog && <p className="cap left">Ohne KI wären es {pct(res.local.top1, res.n)} auf Platz 1 und {pct(res.local.top3, res.n)} in den Top 3.</p>}
+    {res && !prog && <p className="cap left">{res.n} Songs · {res.provider} · {new Date(res.at).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' })}</p>}
+    {!!res?.misses.length && !prog && <details className="misses"><summary>Daneben ({res.misses.length})</summary>
       <ul>{res.misses.map((m, i) => <li key={i}><b>{m.song}</b><small>gehört in: {m.expected.join(', ')}</small><small>vorgeschlagen: {m.got.join(', ')}</small></li>)}</ul>
     </details>}
-    <div className="actions"><button className="pill glass hot" disabled={busy !== null} onClick={run}>
-      {busy !== null ? `Prüfe … ${busy}/${N}` : res ? 'Erneut messen' : 'Jetzt messen'}</button></div>
+    {prog && <ul className="steps">
+      {prog.steps.map((s, i) => <li key={i} className={s.failed ? 'fail' : s.top1 ? 'ok' : s.top3 ? 'mid' : 'no'}>
+        <span>{s.failed ? '!' : s.top1 ? '✓' : s.top3 ? '≈' : '✕'}</span>{s.song}{s.failed && <small>{s.failed}</small>}</li>)}
+      {prog.done < prog.total && <li className="run"><span>…</span>prüfe Song {prog.done + 1} von {prog.total}</li>}
+    </ul>}
+    <div className="actions">
+      {[10, 20].map(x => <button key={x} className={'pill glass' + (n === x ? ' hot' : '')} disabled={!!prog} onClick={() => setN(x)}>{x} Songs</button>)}
+      <button className="pill glass hot" disabled={!!prog} onClick={run}>{prog ? `Prüfe … ${prog.done}/${prog.total}` : res ? 'Erneut messen' : 'Jetzt messen'}</button>
+    </div>
   </section>
 }
 
@@ -103,6 +112,7 @@ function MixPanel({ onError }: { onError: (m: string) => void }) {
     {mix && <>
       <b className="mix-name">{mix.name}</b>
       {mix.description && <p className="cap left">{mix.description}</p>}
+      {mix.criteria && <p className="cap left">Verstanden als: {mix.criteria} · {mix.tracks.length} Songs</p>}
       <ol className="mix">{mix.tracks.map((t, i) => <li key={t.id}><span className="nr">{i + 1}</span>{t.artists[0]} – {t.name}</li>)}</ol>
       <div className="actions">
         {url ? <a className="pill glass hot" href={url} target="_blank" rel="noreferrer">In Spotify öffnen ↗</a>

@@ -188,6 +188,13 @@ textarea.field{resize:vertical;font-family:inherit;line-height:1.45;-webkit-user
 .mix li{display:flex;gap:10px}
 .mix .nr{width:1.8em;flex:none;text-align:right;color:var(--muted);font-variant-numeric:tabular-nums}
 a.pill{display:inline-flex;align-items:center;text-decoration:none;color:inherit}
+.steps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px;font-size:13.5px}
+.steps li{display:flex;flex-wrap:wrap;gap:8px;align-items:baseline}
+.steps li span{width:1.2em;flex:none;text-align:center;font-weight:800}
+.steps .ok span{color:#5be49b}.steps .mid span{color:var(--accent-hot)}.steps .no span,.steps .fail span{color:#ff8a7a}
+.steps small{flex-basis:100%;padding-left:calc(1.2em + 8px);color:var(--muted);font-size:12px}
+.steps .run{color:var(--muted)}
+label.pill{display:inline-flex;align-items:center;cursor:pointer}
 .sugg{gap:10px}
 .sugg-head{display:flex;align-items:center;gap:12px}
 .sugg-head .never{margin-left:auto;width:32px;height:32px;flex:none;border-radius:50%;font-size:14px;color:var(--muted);

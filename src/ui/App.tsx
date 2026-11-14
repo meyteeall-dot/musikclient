@@ -8,6 +8,7 @@ import { clearPause, NotLoggedIn, RateLimited } from '../spotify/api'
 import { startWebPlayer } from '../spotify/player'
 import { accessToken, handleRedirect, login, logout, redirectUri } from '../spotify/auth'
 import { glassScroll } from './glass/scroll'
+import { exportData, importData, persisted } from '../data/backup'
 import { CoverRow } from './Cover'
 import { Player } from './Player'
 import { PlaylistView } from './PlaylistView'
@@ -226,6 +227,7 @@ function Settings(p: { loggedIn: boolean; onLogout: () => void; onError: (m: str
       </div>
     </section>
     <AiKeys onSaved={p.onAiSaved} />
+    <Backup onError={p.onError} />
     <Look />
     <p className="cap">Alle Daten und Schlüssel bleiben nur auf diesem Gerät gespeichert.</p>
   </div>
@@ -283,5 +285,27 @@ function AiKeys({ onSaved }: { onSaved: () => void }) {
         autoCapitalize="off" autoCorrect="off" spellCheck={false} autoComplete="off" />
     </div>)}
     <div className="actions"><button className="pill glass" onClick={save}>{saved ? 'Gespeichert ✓' : 'Speichern'}</button></div>
+  </section>
+}
+
+/** Sicherung der eingelesenen Daten als Datei + Hinweis, ob der Browser sie dauerhaft behält. */
+function Backup({ onError }: { onError: (m: string) => void }) {
+  const [safe, setSafe] = useState<boolean | null>(null)
+  const [last, setLast] = useState<number | undefined>()
+  const [msg, setMsg] = useState('')
+  useEffect(() => { persisted().then(setSafe); kv.get<number>('lastBackup').then(setLast) }, [])
+  const load = async (f?: File) => {
+    if (!f) return
+    try { setMsg(`${await importData(f)} Playlists wiederhergestellt – bitte App neu laden.`) } catch (e) { onError((e as Error).message) }
+  }
+  return <section className="panel glass">
+    <h2>Daten sichern</h2>
+    <p className="cap left">{safe ? 'Der Browser hat zugesagt, die Daten dauerhaft zu behalten.' : 'Der Browser darf die Daten bei Platzmangel oder nach längerer Nichtnutzung löschen.'} Am sichersten: Musikclient über „Teilen → Zum Home-Bildschirm“ als App installieren und ab und zu eine Sicherung speichern.</p>
+    <p className="cap left">Letzte Sicherung: {last ? new Date(last).toLocaleDateString('de-DE') : 'noch keine'}</p>
+    <div className="actions">
+      <button className="pill glass hot" onClick={() => exportData().then(() => setLast(Date.now()), e => onError(e.message))}>Sicherung speichern</button>
+      <label className="pill glass">Sicherung laden<input type="file" accept="application/json,.json" hidden onChange={e => load(e.target.files?.[0])} /></label>
+    </div>
+    {msg && <p className="cap left">{msg}</p>}
   </section>
 }

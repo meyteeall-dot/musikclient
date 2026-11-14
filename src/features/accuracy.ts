@@ -4,11 +4,13 @@ import { db, kv, type Track } from '../data/db'
 import { getExcluded, suggest } from './suggest'
 
 export interface Miss { song: string; expected: string[]; got: string[] }
+/** Ein geprüfter Song, live für die Anzeige. */
+export interface Step { song: string; top1: boolean; top3: boolean; failed?: string }
 export interface Accuracy { at: number; n: number; top1: number; top3: number; provider: string; misses: Miss[]; local?: { top1: number; top3: number } }
 
 export const lastAccuracy = () => kv.get<Accuracy>('accuracy')
 
-export async function measureAccuracy(n: number, onProgress?: (done: number) => void): Promise<Accuracy> {
+export async function measureAccuracy(n: number, onStep?: (done: number, total: number, step?: Step) => void): Promise<Accuracy> {
   const d = await db
   const [all, excluded] = await Promise.all([d.getAll('playlists'), getExcluded()])
   const name = new Map(all.map(p => [p.id, p.name]))
@@ -33,24 +35,32 @@ export async function measureAccuracy(n: number, onProgress?: (done: number) => 
   }
   if (!pool.length) throw new Error('Noch keine eingelesenen Songs zum Prüfen – erst abgleichen.')
 
-  let top1 = 0, top3 = 0, provider = 'lokal'
+  let top1 = 0, top3 = 0, provider = 'lokal', done = 0, lastErr = ''
   const local = { top1: 0, top3: 0 }   // dieselben Songs nur mit lokalen Punkten: kostet nichts, zeigt den Wert der KI
   const misses: Miss[] = []
+  onStep?.(0, pool.length)
   for (const [i, { t, in: inn }] of pool.entries()) {
-    onProgress?.(i)
-    if (i && provider !== 'lokal') await new Promise(r => setTimeout(r, 4000))   // KI-Minutenlimit schonen
-    const res = await suggest(t, { test: true })
-    provider = res.provider
-    const lids = (await suggest(t, { test: true, local: true })).suggestions.map(s => s.playlist.id)
-    if (inn.has(lids[0])) local.top1++
-    if (lids.some(id => inn.has(id))) local.top3++
-    const ids = res.suggestions.map(s => s.playlist.id)
-    if (inn.has(ids[0])) top1++
-    if (ids.some(id => inn.has(id))) top3++
-    else misses.push({ song: `${t.artists[0]} – ${t.name}`, expected: [...inn].map(id => name.get(id) ?? '?'), got: ids.map(id => name.get(id) ?? '?') })
+    const song = `${t.artists[0]} – ${t.name}`
+    if (i && provider.startsWith('Gemini')) await new Promise(r => setTimeout(r, 3000))   // KI-Minutenlimit schonen
+    try {
+      const res = await suggest(t, { test: true })
+      provider = res.provider
+      const lids = (await suggest(t, { test: true, local: true })).suggestions.map(s => s.playlist.id)
+      if (inn.has(lids[0])) local.top1++
+      if (lids.some(id => inn.has(id))) local.top3++
+      const ids = res.suggestions.map(s => s.playlist.id), ok1 = inn.has(ids[0]), ok3 = ids.some(id => inn.has(id))
+      if (ok1) top1++
+      if (ok3) top3++
+      else misses.push({ song, expected: [...inn].map(id => name.get(id) ?? '?'), got: ids.map(id => name.get(id) ?? '?') })
+      done++
+      onStep?.(i + 1, pool.length, { song, top1: ok1, top3: ok3 })
+    } catch (e) {   // ein Fehler bricht nicht die ganze Messung ab: Song zählt nicht mit
+      lastErr = (e as Error).message
+      onStep?.(i + 1, pool.length, { song, top1: false, top3: false, failed: lastErr })
+    }
   }
-  onProgress?.(pool.length)
-  const r = { at: Date.now(), n: pool.length, top1, top3, provider, misses, local }
+  if (!done) throw new Error('Kein Song ließ sich prüfen: ' + lastErr)
+  const r = { at: Date.now(), n: done, top1, top3, provider, misses, local }
   await kv.set('accuracy', r)
   return r
 }
