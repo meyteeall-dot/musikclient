@@ -24,7 +24,9 @@ const SHORTLIST = 8   // Stufe 1 wählt so viele Kandidaten, Stufe 2 sieht von i
 const SONGS_PER_CAND = 25
 
 /** Lokale Punkte einer Playlist für einen Song. Ablehnungen („auf keinen Fall") desselben Künstlers ziehen stark ab. */
-const sum = (p: Parts, without?: Signal) => (Object.keys(p) as Signal[]).reduce((a, s) => s === without ? a : a + p[s], 0)
+/** Gewicht je Baustein (1 = wie eingebaut). Von der Gewichts-Optimierung gelernt, unter kv „weights“ gespeichert. */
+export type Weights = Partial<Record<Signal, number>>
+const sum = (p: Parts, without?: Signal, w: Weights = {}) => (Object.keys(p) as Signal[]).reduce((a, s) => s === without ? a : a + p[s] * (w[s] ?? 1), 0)
 
 export function score(song: Track, tracks: Track[], prof: Profile | undefined, choices: Choice[], playlistId: string, lessons: Lesson[] = []) {
   const ids = new Set(song.artistIds), sameArtist = (c: Choice) => c.artistIds.some(a => ids.has(a))
@@ -85,11 +87,11 @@ export type Library = Awaited<ReturnType<typeof loadLibrary>>
 export async function loadLibrary() {
   status('lese Songs aus dem Speicher')
   const d = await db
-  const [all, profiles, choices, excluded, tracks, lessons] = await Promise.all([d.getAll('playlists'), d.getAll('profiles'), d.getAll('choices'), getExcluded(), d.getAll('tracks'), getLessons()])
+  const [all, profiles, choices, excluded, tracks, lessons, weights] = await Promise.all([d.getAll('playlists'), d.getAll('profiles'), d.getAll('choices'), getExcluded(), d.getAll('tracks'), getLessons(), kv.get<Weights>('weights')])
   const sound = new Map((await d.getAll('sound')).map(s => [s.id, s]))
   const inPl = new Map<string, string[]>()   // Song → Playlists, in denen er liegt (für den Klangvergleich)
   for (const t of tracks) for (const x of t.tracks) inPl.set(x.id, [...(inPl.get(x.id) ?? []), t.id])
-  return { all, profiles, choices, excluded, lessons, sound, inPl, tracks: new Map(tracks.map(t => [t.id, t.tracks])) }
+  return { all, profiles, choices, excluded, lessons, sound, inPl, weights: weights ?? {}, tracks: new Map(tracks.map(t => [t.id, t.tracks])) }
 }
 
 async function compute(song: Track, opts: { test?: boolean; local?: boolean; lib?: Library }): Promise<SuggestResult> {
@@ -114,7 +116,7 @@ async function compute(song: Track, opts: { test?: boolean; local?: boolean; lib
     }
     const s = score(song, tracks, profOf.get(p.id), choices, p.id, lessons), kl = votes.get(p.id) ?? 0
     const parts = { ...s.parts, sound: kl * 8 }   // Klang: bis zu 8 Punkte
-    cands.push({ p, prof: profOf.get(p.id), tracks, ...s, kl, parts, score: sum(parts) })
+    cands.push({ p, prof: profOf.get(p.id), tracks, ...s, kl, parts, score: sum(parts, undefined, lib.weights) })
   }
   cands.sort((a, b) => b.score - a.score)
 
@@ -197,6 +199,6 @@ export async function reject(song: Track, playlist: Playlist) {
 }
 
 /** Signal-Analyse: Rangfolge der Playlists nur nach Punkten, einmal ohne den genannten Baustein. */
-export const rankWithout = (ranking: { id: string; parts: Parts }[], without?: Signal) =>
+export const rankWithout = (ranking: { id: string; parts: Parts }[], without?: Signal, w: Weights = {}) =>
   // Gleichstand neutral nach ID lösen – nicht nach der vollen Rangfolge, sonst sähe „ohne X“ zu gut aus
-  [...ranking].sort((a, b) => sum(b.parts, without) - sum(a.parts, without) || a.id.localeCompare(b.id)).map(r => r.id)
+  [...ranking].sort((a, b) => sum(b.parts, without, w) - sum(a.parts, without, w) || a.id.localeCompare(b.id)).map(r => r.id)

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { lastAccuracy, measureAccuracy, type Ablation, type Accuracy, type Miss, type Step } from '../features/accuracy'
-import { SIGNALS, type Signal } from '../features/suggest'
+import { SIGNALS, type Signal, type Weights } from '../features/suggest'
+import { getWeights, optimizeWeights, resetWeights, saveWeights, type Optimized } from '../features/weights'
 import { aiHealth } from '../ai'
 import { forgetLesson, getLessons } from '../features/lessons'
 import { doneInbox, loadInbox } from '../features/inbox'
@@ -19,6 +20,7 @@ export function Tools({ onError, onAdded }: { onError: (m: string) => void; onAd
     <InboxPanel onError={onError} onPick={setSong} />
     <MixPanel onError={onError} />
     <AccuracyPanel onError={onError} />
+    <WeightsPanel onError={onError} />
     <DupesPanel />
   </div>
 }
@@ -209,4 +211,43 @@ function SignalTable({ n, local, ablation }: { n: number; local: { top1: number;
       <tbody>{rows.map(r => <tr key={r.s}><td>{SIGNALS[r.s]}</td><td>{diff(local.top1, ablation[r.s]!.top1)}</td><td>{diff(local.top3, ablation[r.s]!.top3)}</td></tr>)}</tbody>
     </table>
   </details>
+}
+
+/** Gewichte aus der eigenen Sammlung lernen: Hälfte A lernt, Hälfte B prüft. */
+function WeightsPanel({ onError }: { onError: (m: string) => void }) {
+  const [cur, setCur] = useState<Weights>({})
+  const [res, setRes] = useState<Optimized | null>(null)
+  const [busy, setBusy] = useState('')
+  const [saved, setSaved] = useState(false)
+  useEffect(() => { getWeights().then(setCur) }, [])
+  const run = async () => {
+    setBusy('starte …'); setRes(null); setSaved(false)
+    try { setRes(await optimizeWeights(setBusy)) } catch (e) { onError((e as Error).message) }
+    setBusy('')
+  }
+  const apply = async () => { await saveWeights(res!.weights); setCur(res!.weights); setSaved(true) }
+  const reset = async () => { await resetWeights(); setCur({}); setRes(null); setSaved(false) }
+  const p = (v: number) => `${Math.round(v * 100)} %`
+  const gain = res ? res.after.test - res.before.test : 0
+  const changed = (Object.keys(SIGNALS) as Signal[]).filter(s => (res?.weights[s] ?? 1) !== (cur[s] ?? 1) || (cur[s] ?? 1) !== 1)
+  return <section className="panel glass">
+    <h2>Gewichte optimieren</h2>
+    <p className="cap left">Die App probiert für jeden Fakt (Klang, Künstler, Epoche …) verschiedene Gewichte aus – an der einen Hälfte deiner Songs – und prüft an der anderen Hälfte, ob es wirklich besser trifft. Ohne KI, kostenlos, dauert je nach Sammlung ein bis wenige Minuten.</p>
+    {busy && <p className="cap left">{busy}</p>}
+    {res && <>
+      <div className="stats">
+        <div><b>{p(res.before.test)}</b><small>bisher (Prüf-Hälfte)</small></div>
+        <div><b>{p(res.after.test)}</b><small>optimiert (Prüf-Hälfte)</small></div>
+      </div>
+      <p className="cap left">{res.n} Songs · Lern-Hälfte {p(res.before.train)} → {p(res.after.train)} · {gain > .005 ? `echte Verbesserung um ${Math.round(gain * 100)} Prozentpunkte` : 'keine echte Verbesserung – bisherige Gewichte behalten'}</p>
+    </>}
+    {(res || changed.length > 0) && <table className="signals"><thead><tr><th>Fakt</th><th>aktuell</th>{res && <th>optimiert</th>}</tr></thead>
+      <tbody>{(Object.keys(SIGNALS) as Signal[]).map(s => <tr key={s}><td>{SIGNALS[s]}</td><td>×{cur[s] ?? 1}</td>{res && <td>×{res.weights[s] ?? 1}</td>}</tr>)}</tbody>
+    </table>}
+    <div className="actions">
+      <button className="pill glass hot" disabled={!!busy} onClick={run}>{busy ? 'Optimiere …' : res ? 'Erneut optimieren' : 'Optimieren'}</button>
+      {res && gain > .005 && <button className="pill glass hot" disabled={saved} onClick={apply}>{saved ? 'Übernommen ✓' : 'Übernehmen'}</button>}
+      {Object.keys(cur).length > 0 && <button className="pill glass" disabled={!!busy} onClick={reset}>Zurücksetzen</button>}
+    </div>
+  </section>
 }

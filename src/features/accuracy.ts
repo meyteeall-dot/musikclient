@@ -68,11 +68,11 @@ export async function measureAccuracy(n: number, onStep?: (done: number, total: 
         ids = res.suggestions.map(s => s.playlist.id)
       }
       const lres = await suggest(t, { test: true, local: true, lib })
-      const lids = rankWithout(lres.ranking ?? []).slice(0, 3)   // gleiche Gleichstand-Regel wie die Analyse: fairer Vergleich
+      const lids = rankWithout(lres.ranking ?? [], undefined, lib.weights).slice(0, 3)   // gleiche Gleichstand-Regel wie die Analyse: fairer Vergleich
       if (inn.has(lids[0])) local.top1++
       if (lids.some(id => inn.has(id))) local.top3++
       for (const s of Object.keys(SIGNALS) as Signal[]) {   // dieselbe Rechnung, jeweils ohne einen Baustein
-        const r = rankWithout(lres.ranking ?? [], s).slice(0, 3), a = ablation[s] ??= { top1: 0, top3: 0 }
+        const r = rankWithout(lres.ranking ?? [], s, lib.weights).slice(0, 3), a = ablation[s] ??= { top1: 0, top3: 0 }
         if (inn.has(r[0])) a.top1++
         if (r.some(id => inn.has(id))) a.top3++
       }
