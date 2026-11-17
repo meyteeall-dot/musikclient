@@ -4,7 +4,7 @@ import { completeJson, hasAi, status } from '../ai'
 import { db, kv, type Choice, type Playlist, type Profile, type Track } from '../data/db'
 import { addToPlaylist } from '../spotify/api'
 import { getLessons, type Lesson } from './lessons'
-import { soundOf, soundVotes } from './sound'
+import { DEFAULT_SOUND, soundOf, soundVotes, type SoundParams } from './sound'
 
 export interface Suggestion { playlist: Playlist; reason: string }
 /** Bausteine der Punkte – einzeln abschaltbar für die Signal-Analyse der Trefferquote. */
@@ -87,11 +87,11 @@ export type Library = Awaited<ReturnType<typeof loadLibrary>>
 export async function loadLibrary() {
   status('lese Songs aus dem Speicher')
   const d = await db
-  const [all, profiles, choices, excluded, tracks, lessons, weights] = await Promise.all([d.getAll('playlists'), d.getAll('profiles'), d.getAll('choices'), getExcluded(), d.getAll('tracks'), getLessons(), kv.get<Weights>('weights')])
+  const [all, profiles, choices, excluded, tracks, lessons, weights, soundParams] = await Promise.all([d.getAll('playlists'), d.getAll('profiles'), d.getAll('choices'), getExcluded(), d.getAll('tracks'), getLessons(), kv.get<Weights>('weights'), kv.get<SoundParams>('soundParams')])
   const sound = new Map((await d.getAll('sound')).map(s => [s.id, s]))
   const inPl = new Map<string, string[]>()   // Song → Playlists, in denen er liegt (für den Klangvergleich)
   for (const t of tracks) for (const x of t.tracks) inPl.set(x.id, [...(inPl.get(x.id) ?? []), t.id])
-  return { all, profiles, choices, excluded, lessons, sound, inPl, weights: weights ?? {}, tracks: new Map(tracks.map(t => [t.id, t.tracks])) }
+  return { all, profiles, choices, excluded, lessons, sound, inPl, weights: weights ?? {}, soundParams: soundParams ?? DEFAULT_SOUND, tracks: new Map(tracks.map(t => [t.id, t.tracks])) }
 }
 
 async function compute(song: Track, opts: { test?: boolean; local?: boolean; lib?: Library }): Promise<SuggestResult> {
@@ -101,7 +101,7 @@ async function compute(song: Track, opts: { test?: boolean; local?: boolean; lib
   const nameOf = new Map(all.map(p => [p.id, p.name]))
   // Klang: die ähnlichst klingenden Songs der Sammlung stimmen für ihre Playlists (der Song selbst zählt nie mit)
   const f = await soundOf(song, lib.sound)
-  const votes = f ? soundVotes(f, lib.sound, lib.inPl, song.id) : new Map<string, number>()
+  const votes = f ? soundVotes(f, lib.sound, lib.inPl, song.id, lib.soundParams) : new Map<string, number>()
   status('berechne Punkte')
   const choices = opts.test ? allChoices.filter(c => c.trackId !== song.id) : allChoices
   const never = new Set(choices.filter(c => c.rejected && c.trackId === song.id).map(c => c.playlistId))

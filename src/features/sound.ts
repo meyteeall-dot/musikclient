@@ -7,10 +7,13 @@ import { api } from '../spotify/api'
 
 const BATCH = 40          // ReccoBeats: Songs pro Abfrage
 const AI_BATCH = 50       // KI-Schätzung: Songs pro Anfrage
-const NEIGHBORS = 20      // so viele ähnlich klingende Songs stimmen ab
 
-type Feat = Omit<Sound, 'id' | 'src' | 'at' | 'alt' | 'tried'>
-const KEYS = ['tempo', 'energy', 'danceability', 'valence', 'acousticness', 'instrumentalness', 'speechiness'] as const
+export type Feat = Omit<Sound, 'id' | 'src' | 'at' | 'alt' | 'tried'>
+export const KEYS = ['tempo', 'energy', 'danceability', 'valence', 'acousticness', 'instrumentalness', 'speechiness'] as const
+export type FeatKey = typeof KEYS[number]
+/** Klangvergleich einstellbar (Feinabstimmung unter Werkzeuge): k = so viele ähnliche Songs stimmen ab, w = Faktor je Merkmal. */
+export interface SoundParams { k: number; w: Partial<Record<FeatKey, number>> }
+export const DEFAULT_SOUND: SoundParams = { k: 20, w: {} }
 
 const spotifyId = (x: any): string | undefined => x?.href?.match(/track\/([A-Za-z0-9]+)/)?.[1]
 const pickFeat = (x: any): Feat => Object.fromEntries(KEYS.filter(k => typeof x?.[k] === 'number').map(k => [k, x[k]]))
@@ -104,11 +107,12 @@ export async function findAlternates(max = 15) {
 // Abstand im Klangraum: Sprechgesang und Energie trennen Genres am stärksten, Tempo ist wegen halb/doppelt unsicher
 const W: Record<typeof KEYS[number], number> = { tempo: .5, energy: 1.2, danceability: 1, valence: 1, acousticness: .9, instrumentalness: .6, speechiness: 1.3 }
 const norm = (k: typeof KEYS[number], v: number) => k === 'tempo' ? Math.min(1, Math.max(0, (v - 60) / 140)) : v
-export function distance(a: Feat, b: Feat) {
+export function distance(a: Feat, b: Feat, mul: SoundParams['w'] = {}) {
   let sum = 0, w = 0
   for (const k of KEYS) {
     if (a[k] == null || b[k] == null) continue
-    sum += W[k] * (norm(k, a[k]!) - norm(k, b[k]!)) ** 2; w += W[k]
+    const wk = W[k] * (mul[k] ?? 1)
+    sum += wk * (norm(k, a[k]!) - norm(k, b[k]!)) ** 2; w += wk
   }
   return w ? Math.sqrt(sum / w) : Infinity
 }
@@ -127,18 +131,27 @@ export async function soundOf(t: Track, stored: Map<string, Sound>): Promise<Fea
 }
 
 /** Die ähnlichsten Songs der Sammlung stimmen für ihre Playlists. Ergebnis: Playlist-ID → Anteil 0–1. */
-export function soundVotes(f: Feat, stored: Map<string, Sound>, inPl: Map<string, string[]>, skipId?: string) {
-  const near: { id: string; d: number }[] = []
+export function soundVotes(f: Feat, stored: Map<string, Sound>, inPl: Map<string, string[]>, skipId?: string, p: SoundParams = DEFAULT_SOUND) {
+  return votesOf(nearest(f, stored, inPl, skipId, p.w), p.k)
+}
+
+/** Alle Songs der Sammlung mit Klangdaten, nach Abstand sortiert (der Song selbst nie). */
+export function nearest(f: Feat, stored: Map<string, Sound>, inPl: Map<string, string[]>, skipId?: string, mul: SoundParams['w'] = {}) {
+  const near: { d: number; feat: Feat; pls: string[] }[] = []
   for (const [id, s] of stored) {
     if (id === skipId || s.src === 'fehlt' || !inPl.has(id)) continue
-    near.push({ id, d: distance(f, s) })
+    near.push({ d: distance(f, s, mul), feat: s, pls: inPl.get(id)! })
   }
-  near.sort((a, b) => a.d - b.d)
+  return near.sort((a, b) => a.d - b.d)
+}
+
+/** Die k nächsten stimmen ab, nähere zählen mehr. Ergebnis: Playlist-ID → Anteil 0–1. */
+export function votesOf(near: { d: number; pls: string[] }[], k: number) {
   const votes = new Map<string, number>()
   let total = 0
-  for (const { id, d } of near.slice(0, NEIGHBORS)) {
-    const w = 1 / (.05 + d)   // nähere Songs zählen mehr
-    for (const p of inPl.get(id)!) votes.set(p, (votes.get(p) ?? 0) + w)
+  for (const { d, pls } of near.slice(0, k)) {
+    const w = 1 / (.05 + d)
+    for (const p of pls) votes.set(p, (votes.get(p) ?? 0) + w)
     total += w
   }
   for (const [p, v] of votes) votes.set(p, v / (total || 1))

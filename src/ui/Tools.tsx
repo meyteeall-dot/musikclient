@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { lastAccuracy, measureAccuracy, type Ablation, type Accuracy, type Miss, type Step } from '../features/accuracy'
 import { SIGNALS, type Signal, type Weights } from '../features/suggest'
-import { getWeights, optimizeWeights, resetWeights, saveWeights, type Optimized } from '../features/weights'
+import { getSoundParams, getWeights, optimizeAll, resetTuning, saveTuning, type Optimized } from '../features/weights'
+import { DEFAULT_SOUND, KEYS, type SoundParams } from '../features/sound'
 import { aiHealth } from '../ai'
 import { forgetLesson, getLessons } from '../features/lessons'
 import { doneInbox, loadInbox } from '../features/inbox'
@@ -213,41 +214,53 @@ function SignalTable({ n, local, ablation }: { n: number; local: { top1: number;
   </details>
 }
 
-/** Gewichte aus der eigenen Sammlung lernen: Hälfte A lernt, Hälfte B prüft. */
+const FEAT_NAMES: Record<string, string> = { tempo: 'Tempo', energy: 'Energie', danceability: 'Tanzbarkeit', valence: 'Stimmung', acousticness: 'Akustisch', instrumentalness: 'Instrumental', speechiness: 'Sprechgesang' }
+
+/** Feinabstimmung aus der eigenen Sammlung: Klangvergleich + Gewichte, Hälfte A lernt, Hälfte B prüft; dazu Verwechslungen. */
 function WeightsPanel({ onError }: { onError: (m: string) => void }) {
-  const [cur, setCur] = useState<Weights>({})
+  const [cur, setCur] = useState<{ w: Weights; s: SoundParams }>({ w: {}, s: DEFAULT_SOUND })
   const [res, setRes] = useState<Optimized | null>(null)
   const [busy, setBusy] = useState('')
   const [saved, setSaved] = useState(false)
-  useEffect(() => { getWeights().then(setCur) }, [])
+  useEffect(() => { Promise.all([getWeights(), getSoundParams()]).then(([w, s]) => setCur({ w, s })) }, [])
   const run = async () => {
     setBusy('starte …'); setRes(null); setSaved(false)
-    try { setRes(await optimizeWeights(setBusy)) } catch (e) { onError((e as Error).message) }
+    try { setRes(await optimizeAll(setBusy)) } catch (e) { onError((e as Error).message) }
     setBusy('')
   }
-  const apply = async () => { await saveWeights(res!.weights); setCur(res!.weights); setSaved(true) }
-  const reset = async () => { await resetWeights(); setCur({}); setRes(null); setSaved(false) }
+  const apply = async () => { await saveTuning(res!.weights, res!.sound); setCur({ w: res!.weights, s: res!.sound }); setSaved(true) }
+  const reset = async () => { await resetTuning(); setCur({ w: {}, s: DEFAULT_SOUND }); setRes(null); setSaved(false) }
   const p = (v: number) => `${Math.round(v * 100)} %`
   const gain = res ? res.after.test - res.before.test : 0
-  const changed = (Object.keys(SIGNALS) as Signal[]).filter(s => (res?.weights[s] ?? 1) !== (cur[s] ?? 1) || (cur[s] ?? 1) !== 1)
+  const tuned = Object.keys(cur.w).length > 0 || cur.s.k !== DEFAULT_SOUND.k || Object.keys(cur.s.w).length > 0
   return <section className="panel glass">
-    <h2>Gewichte optimieren</h2>
-    <p className="cap left">Die App probiert für jeden Fakt (Klang, Künstler, Epoche …) verschiedene Gewichte aus – an der einen Hälfte deiner Songs – und prüft an der anderen Hälfte, ob es wirklich besser trifft. Ohne KI, kostenlos, dauert je nach Sammlung ein bis wenige Minuten.</p>
+    <h2>Feinabstimmung</h2>
+    <p className="cap left">Die App stellt erst den Klangvergleich fein ein (wie viele ähnliche Songs abstimmen, wie stark Energie, Sprechgesang, Tempo … zählen), dann die Gewichte der Fakten – gelernt an der einen Hälfte deiner Songs, geprüft an der anderen. Dazu: welche Playlists am häufigsten verwechselt werden. Ohne KI, kostenlos, ein paar Minuten.</p>
     {busy && <p className="cap left">{busy}</p>}
     {res && <>
       <div className="stats">
         <div><b>{p(res.before.test)}</b><small>bisher (Prüf-Hälfte)</small></div>
-        <div><b>{p(res.after.test)}</b><small>optimiert (Prüf-Hälfte)</small></div>
+        <div><b>{p(res.after.test)}</b><small>abgestimmt (Prüf-Hälfte)</small></div>
       </div>
-      <p className="cap left">{res.n} Songs · Lern-Hälfte {p(res.before.train)} → {p(res.after.train)} · {gain > .005 ? `echte Verbesserung um ${Math.round(gain * 100)} Prozentpunkte` : 'keine echte Verbesserung – bisherige Gewichte behalten'}</p>
+      <p className="cap left">{res.n} Songs · Lern-Hälfte {p(res.before.train)} → {p(res.after.train)} · {gain > .005 ? `echte Verbesserung um ${Math.round(gain * 100)} Prozentpunkte` : 'keine echte Verbesserung – bisherige Einstellungen behalten'}</p>
     </>}
-    {(res || changed.length > 0) && <table className="signals"><thead><tr><th>Fakt</th><th>aktuell</th>{res && <th>optimiert</th>}</tr></thead>
-      <tbody>{(Object.keys(SIGNALS) as Signal[]).map(s => <tr key={s}><td>{SIGNALS[s]}</td><td>×{cur[s] ?? 1}</td>{res && <td>×{res.weights[s] ?? 1}</td>}</tr>)}</tbody>
-    </table>}
+    {(res || tuned) && <details className="misses"><summary>Einstellungen im Detail</summary>
+      <table className="signals"><thead><tr><th>Fakt</th><th>aktuell</th>{res && <th>neu</th>}</tr></thead>
+        <tbody>
+          {(Object.keys(SIGNALS) as Signal[]).map(s => <tr key={s}><td>{SIGNALS[s]}</td><td>×{cur.w[s] ?? 1}</td>{res && <td>×{res.weights[s] ?? 1}</td>}</tr>)}
+          <tr><td>Klang: ähnliche Songs</td><td>{cur.s.k}</td>{res && <td>{res.sound.k}</td>}</tr>
+          {KEYS.map(k => <tr key={k}><td>Klang: {FEAT_NAMES[k]}</td><td>×{cur.s.w[k] ?? 1}</td>{res && <td>×{res.sound.w[k] ?? 1}</td>}</tr>)}
+        </tbody>
+      </table>
+    </details>}
+    {!!res?.confusion.length && <details className="misses"><summary>Häufigste Verwechslungen</summary>
+      <p className="cap left">„gehört in → vorgeschlagen“. Viele davon passen vielleicht ehrlich in beide – genau dort hilft später die KI.</p>
+      <ul>{res.confusion.map((c, i) => <li key={i}><b>{c.from} → {c.to}</b><small>{c.n}×</small></li>)}</ul>
+    </details>}
     <div className="actions">
-      <button className="pill glass hot" disabled={!!busy} onClick={run}>{busy ? 'Optimiere …' : res ? 'Erneut optimieren' : 'Optimieren'}</button>
+      <button className="pill glass hot" disabled={!!busy} onClick={run}>{busy ? 'Stimme ab …' : res ? 'Erneut abstimmen' : 'Abstimmen'}</button>
       {res && gain > .005 && <button className="pill glass hot" disabled={saved} onClick={apply}>{saved ? 'Übernommen ✓' : 'Übernehmen'}</button>}
-      {Object.keys(cur).length > 0 && <button className="pill glass" disabled={!!busy} onClick={reset}>Zurücksetzen</button>}
+      {tuned && <button className="pill glass" disabled={!!busy} onClick={reset}>Zurücksetzen</button>}
     </div>
   </section>
 }
