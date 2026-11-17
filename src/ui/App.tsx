@@ -267,6 +267,7 @@ function Settings(p: { loggedIn: boolean; onLogout: () => void; onError: (m: str
     <Backup onError={p.onError} />
     <Look />
     <p className="cap">Alle Daten und Schlüssel bleiben nur auf diesem Gerät gespeichert.</p>
+    <p className="cap">Version vom {new Date(__BUILD__).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' })}</p>
   </div>
 }
 

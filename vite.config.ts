@@ -5,6 +5,7 @@ import { VitePWA } from 'vite-plugin-pwa'
 // GitHub Pages serviert unter /musikclient/
 export default defineConfig({
   base: '/musikclient/',
+  define: { __BUILD__: JSON.stringify(new Date().toISOString()) },   // Versionsstand, sichtbar unter Optionen
   plugins: [
     react(),
     VitePWA({
