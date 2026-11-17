@@ -9,6 +9,7 @@ import { startWebPlayer } from '../spotify/player'
 import { accessToken, handleRedirect, login, logout, redirectUri } from '../spotify/auth'
 import { glassScroll } from './glass/scroll'
 import { exportData, importData, persisted } from '../data/backup'
+import { testSound } from '../features/sound'
 import { CoverRow } from './Cover'
 import { Player } from './Player'
 import { PlaylistView } from './PlaylistView'
@@ -265,6 +266,7 @@ function Settings(p: { loggedIn: boolean; onLogout: () => void; onError: (m: str
     </section>
     <AiKeys onSaved={p.onAiSaved} />
     <Backup onError={p.onError} />
+    <SoundTest />
     <Look />
     <p className="cap">Alle Daten und Schlüssel bleiben nur auf diesem Gerät gespeichert.</p>
     <p className="cap">Version vom {new Date(__BUILD__).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' })}</p>
@@ -345,5 +347,20 @@ function Backup({ onError }: { onError: (m: string) => void }) {
       <label className="pill glass">Sicherung laden<input type="file" accept="application/json,.json" hidden onChange={e => load(e.target.files?.[0])} /></label>
     </div>
     {msg && <p className="cap left">{msg}</p>}
+  </section>
+}
+
+/** Test: liefert ReccoBeats Klangdaten für deine Songs, direkt aus dem Browser? */
+function SoundTest() {
+  const [lines, setLines] = useState<string[] | null>(null)
+  const [err, setErr] = useState('')
+  const [busy, setBusy] = useState(false)
+  const run = () => { setBusy(true); setErr(''); setLines(null); testSound().then(setLines, e => setErr(e.message)).finally(() => setBusy(false)) }
+  return <section className="panel glass">
+    <h2>Klangdaten (Test)</h2>
+    <p className="cap left">Fragt für 5 zufällige Songs Tempo, Energie, Tanzbarkeit und Stimmung beim kostenlosen Dienst ReccoBeats ab. Klappt das, kann die App Songs nach echtem Klang vergleichen.</p>
+    {lines && <ul className="dupes">{lines.map((l, i) => <li key={i}><small>{l}</small></li>)}</ul>}
+    {err && <p className="cap left err">Fehlgeschlagen: {err}</p>}
+    <div className="actions"><button className="pill glass hot" disabled={busy} onClick={run}>{busy ? 'Frage ab …' : 'Klangdaten testen'}</button></div>
   </section>
 }
