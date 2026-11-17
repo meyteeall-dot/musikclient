@@ -7,14 +7,25 @@ import { getLessons, type Lesson } from './lessons'
 import { soundOf, soundVotes } from './sound'
 
 export interface Suggestion { playlist: Playlist; reason: string }
-export interface SuggestResult { suggestions: Suggestion[]; contains: Playlist[]; provider: string }
+/** Bausteine der Punkte – einzeln abschaltbar für die Signal-Analyse der Trefferquote. */
+export const SIGNALS = { artist: 'Künstler schon drin', sound: 'Klang', chosen: 'Deine Hinzufügungen', rejected: '✕ Ablehnungen', lessons: 'Merksätze', era: 'Epoche', general: 'Oft gewählte Playlists' } as const
+export type Signal = keyof typeof SIGNALS
+export type Parts = Record<Signal, number>
 
-interface Cand { p: Playlist; prof?: Profile; tracks: Track[]; k: number; w: number; era: boolean; score: number; kl: number }
+export interface SuggestResult {
+  suggestions: Suggestion[]; contains: Playlist[]; provider: string
+  /** nur im Test: alle Kandidaten mit ihren Punkte-Bausteinen */
+  ranking?: { id: string; parts: Parts }[]
+}
+
+interface Cand { p: Playlist; prof?: Profile; tracks: Track[]; k: number; w: number; era: boolean; score: number; kl: number; parts: Parts }
 
 const SHORTLIST = 8   // Stufe 1 wählt so viele Kandidaten, Stufe 2 sieht von ihnen echte Songs
 const SONGS_PER_CAND = 25
 
 /** Lokale Punkte einer Playlist für einen Song. Ablehnungen („auf keinen Fall") desselben Künstlers ziehen stark ab. */
+const sum = (p: Parts, without?: Signal) => (Object.keys(p) as Signal[]).reduce((a, s) => s === without ? a : a + p[s], 0)
+
 export function score(song: Track, tracks: Track[], prof: Profile | undefined, choices: Choice[], playlistId: string, lessons: Lesson[] = []) {
   const ids = new Set(song.artistIds), sameArtist = (c: Choice) => c.artistIds.some(a => ids.has(a))
   const k = tracks.filter(t => t.artistIds.some(a => ids.has(a))).length                      // Songs desselben Künstlers
@@ -25,7 +36,11 @@ export function score(song: Track, tracks: Track[], prof: Profile | undefined, c
   // Merksätze zum selben Künstler: hierher gehört (+), fälschlich hierher vorgeschlagen (−)
   const same = lessons.filter(l => l.artistIds.some(a => ids.has(a)))
   const lr = same.filter(l => l.right.includes(playlistId)).length, lw = same.filter(l => l.wrong === playlistId).length
-  return { k, w, era, score: Math.min(k, 5) * 2 + w * 3 - no * 4 + Math.min(lr, 3) * 2 - Math.min(lw, 3) * 2 + (era ? 2 : 0) + Math.min(mine.length, 6) * .25 }
+  const parts: Parts = {
+    artist: Math.min(k, 5) * 2, chosen: w * 3, rejected: -no * 4, lessons: Math.min(lr, 3) * 2 - Math.min(lw, 3) * 2,
+    era: era ? 2 : 0, general: Math.min(mine.length, 6) * .25, sound: 0,   // Klang kommt in compute() dazu
+  }
+  return { k, w, era, parts, score: sum(parts) }
 }
 
 /** Playlists, die nie vorgeschlagen werden (und kein KI-Profil brauchen). Lokal gespeichert, übersteht jeden Abgleich. */
@@ -98,7 +113,8 @@ async function compute(song: Track, opts: { test?: boolean; local?: boolean; lib
       tracks = tracks.filter(t => t.id !== song.id)
     }
     const s = score(song, tracks, profOf.get(p.id), choices, p.id, lessons), kl = votes.get(p.id) ?? 0
-    cands.push({ p, prof: profOf.get(p.id), tracks, ...s, kl, score: s.score + kl * 8 })   // Klang: bis zu 8 Punkte
+    const parts = { ...s.parts, sound: kl * 8 }   // Klang: bis zu 8 Punkte
+    cands.push({ p, prof: profOf.get(p.id), tracks, ...s, kl, parts, score: sum(parts) })
   }
   cands.sort((a, b) => b.score - a.score)
 
@@ -152,7 +168,7 @@ ${blocks}` })
     if (picks.some(s => s.playlist.id === c.p.id)) continue
     picks.push({ playlist: c.p, reason: localReason(song, c) })
   }
-  return { suggestions: picks, contains, provider }
+  return { suggestions: picks, contains, provider, ...(opts.test ? { ranking: cands.map(c => ({ id: c.p.id, parts: c.parts })) } : {}) }
 }
 
 function localReason(song: Track, c: Cand) {
@@ -179,3 +195,8 @@ export async function reject(song: Track, playlist: Playlist) {
   cache.clear()
   await (await db).add('choices', { trackId: song.id, artistIds: song.artistIds, playlistId: playlist.id, suggested: [], at: Date.now(), rejected: true })
 }
+
+/** Signal-Analyse: Rangfolge der Playlists nur nach Punkten, einmal ohne den genannten Baustein. */
+export const rankWithout = (ranking: { id: string; parts: Parts }[], without?: Signal) =>
+  // Gleichstand neutral nach ID lösen – nicht nach der vollen Rangfolge, sonst sähe „ohne X“ zu gut aus
+  [...ranking].sort((a, b) => sum(b.parts, without) - sum(a.parts, without) || a.id.localeCompare(b.id)).map(r => r.id)

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { lastAccuracy, measureAccuracy, type Accuracy, type Miss, type Step } from '../features/accuracy'
+import { lastAccuracy, measureAccuracy, type Ablation, type Accuracy, type Miss, type Step } from '../features/accuracy'
+import { SIGNALS, type Signal } from '../features/suggest'
 import { forgetLesson, getLessons } from '../features/lessons'
 import { doneInbox, loadInbox } from '../features/inbox'
 import { buildMix, createMix, type Mix } from '../features/mix'
@@ -23,7 +24,7 @@ export function Tools({ onError, onAdded }: { onError: (m: string) => void; onAd
 
 const pct = (a: number, n: number) => `${Math.round(a / n * 100)} %`
 
-type Totals = { n: number; top1: number; top3: number; l1: number; l3: number; misses: Miss[] }
+type Totals = { n: number; top1: number; top3: number; l1: number; l3: number; misses: Miss[]; ablation: Ablation }
 
 function AccuracyPanel({ onError }: { onError: (m: string) => void }) {
   const [res, setRes] = useState<Accuracy | null>(null)
@@ -55,7 +56,7 @@ function AccuracyPanel({ onError }: { onError: (m: string) => void }) {
     const lock = await (navigator as any).wakeLock?.request('screen').catch(() => null)   // Bildschirm anlassen, solange es läuft
     try {
       if (!endless) { setRes(await round(n, new Set(), 1)); return }
-      const skip = new Set<string>(), t: Totals = { n: 0, top1: 0, top3: 0, l1: 0, l3: 0, misses: [] }
+      const skip = new Set<string>(), t: Totals = { n: 0, top1: 0, top3: 0, l1: 0, l3: 0, misses: [], ablation: {} }
       setTot({ ...t })
       for (let r = 1; !stop.current; r++) {
         let x: Accuracy
@@ -72,6 +73,9 @@ function AccuracyPanel({ onError }: { onError: (m: string) => void }) {
         }
         x.tested?.forEach(id => skip.add(id))
         Object.assign(t, { n: t.n + x.n, top1: t.top1 + x.top1, top3: t.top3 + x.top3, l1: t.l1 + (x.local?.top1 ?? 0), l3: t.l3 + (x.local?.top3 ?? 0), misses: [...x.misses, ...t.misses].slice(0, 100) })
+        for (const [s, v] of Object.entries(x.ablation ?? {}) as [Signal, { top1: number; top3: number }][]) {
+          const a = t.ablation[s] ??= { top1: 0, top3: 0 }; a.top1 += v.top1; a.top3 += v.top3
+        }
         setTot({ ...t }); setRes(x)
         setLearned((await getLessons()).length)
       }
@@ -81,7 +85,7 @@ function AccuracyPanel({ onError }: { onError: (m: string) => void }) {
   const forget = async (id?: string) => { if (!id) return; await forgetLesson(id); setForgot(f => new Set(f).add(id)); setLearned(l => l - 1) }
 
   const busy = !!prog || !!wait
-  const show = endless && tot ? { n: tot.n, top1: tot.top1, top3: tot.top3, local: { top1: tot.l1, top3: tot.l3 }, misses: tot.misses } : res
+  const show = endless && tot ? { n: tot.n, top1: tot.top1, top3: tot.top3, local: { top1: tot.l1, top3: tot.l3 }, misses: tot.misses, ablation: tot.ablation } : res
   const secs = prog ? Math.floor((Date.now() - prog.t0) / 1000) : 0
   return <section className="panel glass">
     <h2>Trefferquote</h2>
@@ -91,6 +95,7 @@ function AccuracyPanel({ onError }: { onError: (m: string) => void }) {
       <div><b>{pct(show.top3, show.n)}</b><small>unter den Top 3</small></div>
     </div>}
     {show?.local && show.n > 0 && <p className="cap left">Ohne KI wären es {pct(show.local.top1, show.n)} auf Platz 1 und {pct(show.local.top3, show.n)} in den Top 3.</p>}
+    {show?.local && show.ablation && show.n > 0 && <SignalTable n={show.n} local={show.local} ablation={show.ablation} />}
     {show && <p className="cap left">{endless && tot ? `Endlos: ${tot.n} Songs geprüft` : `${show.n} Songs`}{res && !endless ? ` · ${res.provider} · ${new Date(res.at).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' })}` : ''} · {learned} Merksätze gelernt</p>}
     {!!show?.misses.length && <details className="misses"><summary>Daneben ({show.misses.length}) – daraus gelernt</summary>
       <ul>{show.misses.map((m, i) => <li key={i}><b>{m.song}</b><small>gehört in: {m.expected.join(', ')}</small>
@@ -180,4 +185,18 @@ function MixPanel({ onError }: { onError: (m: string) => void }) {
       </div>
     </>}
   </section>
+}
+
+/** Was zählt wie viel: wie viele Treffer der Punkte verloren gehen, wenn ein Baustein fehlt. */
+function SignalTable({ n, local, ablation }: { n: number; local: { top1: number; top3: number }; ablation: Ablation }) {
+  const diff = (a: number, b: number) => { const d = Math.round((a - b) / n * 100); return d > 0 ? `−${d} %` : d < 0 ? `+${-d} %` : '±0' }
+  const rows = (Object.keys(SIGNALS) as Signal[]).filter(s => ablation[s])
+    .map(s => ({ s, d1: local.top1 - ablation[s]!.top1, d3: local.top3 - ablation[s]!.top3 }))
+    .sort((a, b) => b.d1 - a.d1 || b.d3 - a.d3)
+  return <details className="misses"><summary>Was zählt wie viel</summary>
+    <p className="cap left">So viele Treffer verlieren die Punkte (ohne KI), wenn ein Fakt fehlt. Großes Minus = wichtiger Fakt, „+“ = der Fakt stört eher. Je mehr Songs geprüft, desto verlässlicher.</p>
+    <table className="signals"><thead><tr><th>ohne …</th><th>Platz 1</th><th>Top 3</th></tr></thead>
+      <tbody>{rows.map(r => <tr key={r.s}><td>{SIGNALS[r.s]}</td><td>{diff(local.top1, ablation[r.s]!.top1)}</td><td>{diff(local.top3, ablation[r.s]!.top3)}</td></tr>)}</tbody>
+    </table>
+  </details>
 }

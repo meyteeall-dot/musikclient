@@ -3,13 +3,18 @@
 import { kv, type Track } from '../data/db'
 import { hasAi } from '../ai'
 import { addLesson } from './lessons'
-import { loadLibrary, suggest } from './suggest'
+import { loadLibrary, rankWithout, SIGNALS, suggest, type Signal } from './suggest'
 
 /** Platz 1 falsch. top3: lag die richtige Playlist wenigstens unter den Top 3. */
 export interface Miss { song: string; trackId?: string; expected: string[]; got: string[]; top3?: boolean }
 /** Ein geprüfter Song, live für die Anzeige. */
 export interface Step { song: string; top1: boolean; top3: boolean; failed?: string }
-export interface Accuracy { at: number; n: number; top1: number; top3: number; provider: string; misses: Miss[]; local?: { top1: number; top3: number }; tested?: string[] }
+export type Ablation = Partial<Record<Signal, { top1: number; top3: number }>>
+export interface Accuracy {
+  at: number; n: number; top1: number; top3: number; provider: string; misses: Miss[]; local?: { top1: number; top3: number }; tested?: string[]
+  /** Signal-Analyse: Treffer der Punkte, wenn jeweils ein Baustein fehlt (Vergleich mit local) */
+  ablation?: Ablation
+}
 
 export const lastAccuracy = () => kv.get<Accuracy>('accuracy')
 
@@ -44,6 +49,7 @@ export async function measureAccuracy(n: number, onStep?: (done: number, total: 
   let top1 = 0, top3 = 0, provider = 'lokal', done = 0, lastErr = ''
   const tested: string[] = [], ai = await hasAi()
   const local = { top1: 0, top3: 0 }   // dieselben Songs nur mit lokalen Punkten: kostet nichts, zeigt den Wert der KI
+  const ablation: Ablation = {}
   const misses: Miss[] = []
   onStep?.(0, pool.length)
   for (const [i, { t, in: inn }] of pool.entries()) {
@@ -57,9 +63,15 @@ export async function measureAccuracy(n: number, onStep?: (done: number, total: 
       // KI ausgefallen und nur Punkte geliefert: nicht als KI-Ergebnis werten
       if (ai && res.provider.startsWith('lokal')) throw new Error('KI nicht erreichbar')
       provider = res.provider
-      const lids = (await suggest(t, { test: true, local: true, lib })).suggestions.map(s => s.playlist.id)
+      const lres = await suggest(t, { test: true, local: true, lib })
+      const lids = rankWithout(lres.ranking ?? []).slice(0, 3)   // gleiche Gleichstand-Regel wie die Analyse: fairer Vergleich
       if (inn.has(lids[0])) local.top1++
       if (lids.some(id => inn.has(id))) local.top3++
+      for (const s of Object.keys(SIGNALS) as Signal[]) {   // dieselbe Rechnung, jeweils ohne einen Baustein
+        const r = rankWithout(lres.ranking ?? [], s).slice(0, 3), a = ablation[s] ??= { top1: 0, top3: 0 }
+        if (inn.has(r[0])) a.top1++
+        if (r.some(id => inn.has(id))) a.top3++
+      }
       const ids = res.suggestions.map(s => s.playlist.id), ok1 = inn.has(ids[0]), ok3 = ids.some(id => inn.has(id))
       if (ok1) top1++
       if (ok3) top3++
@@ -75,7 +87,7 @@ export async function measureAccuracy(n: number, onStep?: (done: number, total: 
     }
   }
   if (!done && !opts.stop?.()) throw new Error('Kein Song ließ sich prüfen: ' + lastErr)
-  const r = { at: Date.now(), n: done, top1, top3, provider, misses, local, tested }
+  const r = { at: Date.now(), n: done, top1, top3, provider, misses, local, tested, ablation }
   if (done) await kv.set('accuracy', r)
   return r
 }

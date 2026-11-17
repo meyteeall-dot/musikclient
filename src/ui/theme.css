@@ -199,6 +199,10 @@ label.pill{display:inline-flex;align-items:center;cursor:pointer}
 .row.accent{background:linear-gradient(145deg,rgba(var(--acc),.16),rgba(var(--acc),.05))}   /* ohne WebGL; mit WebGL tönt der Shader */
 .gl .row.accent{background:none}
 .pill.mini{align-self:flex-start;min-height:34px;padding:6px 12px;font-size:12px;margin-top:4px}
+.signals{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums;margin-top:6px}
+.signals th{text-align:left;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700;padding:4px 0}
+.signals td{padding:6px 0;border-top:1px solid var(--line)}
+.signals td+td,.signals th+th{text-align:right}
 .sugg{gap:10px}
 .sugg-head{display:flex;align-items:center;gap:12px}
 .sugg-head .never{margin-left:auto;width:32px;height:32px;flex:none;border-radius:50%;font-size:14px;color:var(--muted);
