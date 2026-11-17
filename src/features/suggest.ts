@@ -1,6 +1,6 @@
 /* Playlist-Vorschläge für einen Song: lokale Punkte (Künstler schon drin, Epoche, frühere Entscheidungen),
    dann eine KI-Anfrage, die aus den Kandidaten die 3 besten wählt und begründet. Ohne KI: die 3 mit den meisten Punkten. */
-import { completeJson, hasAi } from '../ai'
+import { completeJson, hasAi, status } from '../ai'
 import { db, kv, type Choice, type Playlist, type Profile, type Track } from '../data/db'
 import { addToPlaylist } from '../spotify/api'
 
@@ -51,7 +51,7 @@ const cache = new Map<string, { at: number; res: SuggestResult }>()
 const CACHE_MS = 15 * 60_000
 
 /** test: Trefferquote – Song aus seinen Playlists herausgerechnet. local: nur lokale Punkte, keine KI (Vergleichswert). */
-export async function suggest(song: Track, opts: { test?: boolean; local?: boolean } = {}): Promise<SuggestResult> {
+export async function suggest(song: Track, opts: { test?: boolean; local?: boolean; lib?: Library } = {}): Promise<SuggestResult> {
   const hit = !opts.test && cache.get(song.id)
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.res
   const res = await compute(song, opts)
@@ -59,16 +59,26 @@ export async function suggest(song: Track, opts: { test?: boolean; local?: boole
   return res
 }
 
-async function compute(song: Track, opts: { test?: boolean; local?: boolean }): Promise<SuggestResult> {
+export type Library = Awaited<ReturnType<typeof loadLibrary>>
+
+/** Alles, was ein Vorschlag braucht, in wenigen Datenbankzugriffen (alle Songs auf einmal statt einzeln je Playlist). */
+export async function loadLibrary() {
+  status('lese Songs aus dem Speicher')
   const d = await db
-  const [all, profiles, allChoices, excluded] = await Promise.all([d.getAll('playlists'), d.getAll('profiles'), d.getAll('choices'), getExcluded()])
+  const [all, profiles, choices, excluded, tracks] = await Promise.all([d.getAll('playlists'), d.getAll('profiles'), d.getAll('choices'), getExcluded(), d.getAll('tracks')])
+  return { all, profiles, choices, excluded, tracks: new Map(tracks.map(t => [t.id, t.tracks])) }
+}
+
+async function compute(song: Track, opts: { test?: boolean; local?: boolean; lib?: Library }): Promise<SuggestResult> {
+  const { all, profiles, choices: allChoices, excluded, tracks: tracksOf } = opts.lib ?? await loadLibrary()
+  status('berechne Punkte')
   const choices = opts.test ? allChoices.filter(c => c.trackId !== song.id) : allChoices
   const never = new Set(choices.filter(c => c.rejected && c.trackId === song.id).map(c => c.playlistId))
   const profOf = new Map(profiles.map(p => [p.id, p]))
   const cands: Cand[] = [], contains: Playlist[] = []
   for (const p of all) {
     if ((!p.ownedByMe && !p.collaborative) || excluded.has(p.id) || never.has(p.id)) continue   // fremde, ignorierte, „auf keinen Fall"
-    let tracks = (await d.get('tracks', p.id))?.tracks ?? []
+    let tracks = tracksOf.get(p.id) ?? []
     if (tracks.some(t => t.id === song.id)) {
       if (!opts.test) { contains.push(p); continue }
       tracks = tracks.filter(t => t.id !== song.id)

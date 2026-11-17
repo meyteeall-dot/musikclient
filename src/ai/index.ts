@@ -11,7 +11,7 @@ class AiError extends Error { constructor(public status: number, msg: string) { 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
 /** Was die KI gerade tut, für Live-Anzeigen (z. B. Trefferquote): „Gemini antwortet …“, „Limit, warte 8 s“. */
-const status = (text: string) => dispatchEvent(new CustomEvent('ai-status', { detail: { text, at: Date.now() } }))
+export const status = (text: string) => dispatchEvent(new CustomEvent('ai-status', { detail: { text, at: Date.now() } }))
 
 /** Wartezeit aus einer Limit-Antwort in ms: Header retry-after, Geminis retryDelay oder Text wie „try again in 7m30.5s“ / „retry in 26s“. */
 export function waitOf(r: { headers: { get(k: string): string | null } }, j: any, msg: string) {

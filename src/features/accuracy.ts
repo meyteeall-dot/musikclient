@@ -1,7 +1,7 @@
 /* Trefferquote: zufällige Songs aus den eigenen Playlists werden herausgerechnet und neu zugeordnet.
    Treffer = eine Playlist, in der der Song wirklich liegt, steht auf Platz 1 bzw. unter den Top 3. Kostet nur KI-Anfragen. */
-import { db, kv, type Track } from '../data/db'
-import { getExcluded, suggest } from './suggest'
+import { kv, type Track } from '../data/db'
+import { loadLibrary, suggest } from './suggest'
 
 export interface Miss { song: string; expected: string[]; got: string[] }
 /** Ein geprüfter Song, live für die Anzeige. */
@@ -11,13 +11,13 @@ export interface Accuracy { at: number; n: number; top1: number; top3: number; p
 export const lastAccuracy = () => kv.get<Accuracy>('accuracy')
 
 export async function measureAccuracy(n: number, onStep?: (done: number, total: number, step?: Step) => void): Promise<Accuracy> {
-  const d = await db
-  const [all, excluded] = await Promise.all([d.getAll('playlists'), getExcluded()])
+  const lib = await loadLibrary()   // einmal für die ganze Messung, nicht zweimal pro Song
+  const { all, excluded } = lib
   const name = new Map(all.map(p => [p.id, p.name]))
   const where = new Map<string, { t: Track; in: Set<string> }>()   // Song → alle eigenen Playlists, in denen er liegt
   for (const p of all) {
     if ((!p.ownedByMe && !p.collaborative) || excluded.has(p.id)) continue
-    const tracks = (await d.get('tracks', p.id))?.tracks ?? []
+    const tracks = lib.tracks.get(p.id) ?? []
     if (tracks.length < 5) continue   // zu kleine Playlists lassen sich nicht fair prüfen
     for (const t of tracks) {
       const e = where.get(t.id) ?? { t, in: new Set<string>() }
@@ -43,9 +43,11 @@ export async function measureAccuracy(n: number, onStep?: (done: number, total: 
     const song = `${t.artists[0]} – ${t.name}`
     if (i && provider.startsWith('Gemini')) await new Promise(r => setTimeout(r, 3000))   // KI-Minutenlimit schonen
     try {
-      const res = await suggest(t, { test: true })
+      // Wächter: ein Song darf höchstens 3 Minuten brauchen, dann zählt er als Fehler und es geht weiter
+      const res = await Promise.race([suggest(t, { test: true, lib }),
+        new Promise<never>((_, no) => setTimeout(() => no(new Error('keine Antwort nach 3 Minuten')), 180_000))])
       provider = res.provider
-      const lids = (await suggest(t, { test: true, local: true })).suggestions.map(s => s.playlist.id)
+      const lids = (await suggest(t, { test: true, local: true, lib })).suggestions.map(s => s.playlist.id)
       if (inn.has(lids[0])) local.top1++
       if (lids.some(id => inn.has(id))) local.top3++
       const ids = res.suggestions.map(s => s.playlist.id), ok1 = inn.has(ids[0]), ok3 = ids.some(id => inn.has(id))
