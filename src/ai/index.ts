@@ -10,6 +10,9 @@ export const AI_DEFAULTS = { geminiModel: 'gemini-3.8-flash', groqModel: 'openai
 class AiError extends Error { constructor(public status: number, msg: string) { super(msg) } }
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
+/** Was die KI gerade tut, für Live-Anzeigen (z. B. Trefferquote): „Gemini antwortet …“, „Limit, warte 8 s“. */
+const status = (text: string) => dispatchEvent(new CustomEvent('ai-status', { detail: { text, at: Date.now() } }))
+
 /** Wartezeit aus einer Limit-Antwort in ms: Header retry-after, Geminis retryDelay oder Text wie „try again in 7m30.5s“ / „retry in 26s“. */
 export function waitOf(r: { headers: { get(k: string): string | null } }, j: any, msg: string) {
   const h = Number(r.headers.get('retry-after'))
@@ -24,8 +27,9 @@ export function waitOf(r: { headers: { get(k: string): string | null } }, j: any
 }
 
 /** POST mit Geduld bei kurzen Limits (429): wartet bis 30 s, sonst gleich weiter zum nächsten Anbieter. Nie ohne Ende. */
-async function post(url: string, headers: Record<string, string>, body: unknown) {
+async function post(label: string, url: string, headers: Record<string, string>, body: unknown) {
   for (let attempt = 0; ; attempt++) {
+    status(`${label} antwortet`)
     let r: Response
     try {
       r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body), signal: AbortSignal.timeout(90_000) })
@@ -39,7 +43,9 @@ async function post(url: string, headers: Record<string, string>, body: unknown)
     const said = waitOf(r, j, msg)
     // Langes Limit (Minuten bis Stunden = Tageskontingent): nicht warten, der nächste Anbieter soll übernehmen
     if (said > 30_000) throw new AiError(429, `Limit erreicht, wieder frei in ca. ${Math.ceil(said / 60_000)} Min.`)
-    await sleep(Math.max(said, [3000, 8000, 20000][attempt]))
+    const wait = Math.max(said, [3000, 8000, 20000][attempt])
+    status(`${label}: Limit, warte ${Math.round(wait / 1000)} s`)
+    await sleep(wait)
   }
 }
 
@@ -49,14 +55,25 @@ const gemini: Provider = {
   async complete({ system, prompt, json }) {
     const model = (await kv.get<string>('geminiModel')) || AI_DEFAULTS.geminiModel
     const key = (await kv.get<string>('geminiKey'))!
-    const req = (m: string) => post(`https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`,
+    // Kurzes Nachdenken: Sortieren braucht kein langes Grübeln, spart viel Zeit (sonst bis zu Minuten pro Anfrage)
+    const think = (m: string) => m.startsWith('gemini-2.5') ? { thinkingBudget: 0 } : m.startsWith('gemini-3') ? { thinkingLevel: 'low' } : undefined
+    const req = (m: string, fast = true) => post('Gemini', `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`,
       { 'x-goog-api-key': key }, {
         systemInstruction: { parts: [{ text: system }] },
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: { temperature: .4, ...(json ? { responseMimeType: 'application/json' } : {}) },
+        generationConfig: {
+          temperature: .4, ...(json ? { responseMimeType: 'application/json' } : {}),
+          ...(fast && think(m) ? { thinkingConfig: think(m) } : {}),
+        },
       })
     let j
-    try { j = await req(model) } catch (e) {
+    try {
+      try { j = await req(model) }
+      catch (e) {   // Modell kennt die Denk-Einstellung nicht: ohne sie erneut
+        if (!(e instanceof AiError && e.status === 400 && /think/i.test(e.message))) throw e
+        j = await req(model, false)
+      }
+    } catch (e) {
       // Modell abgeschaltet: Google nennt den Nachfolger in der Fehlermeldung – übernehmen und merken
       const next = e instanceof AiError && e.status === 404 && e.message.match(/use models\/([\w.-]+)/)?.[1]
       if (!next || next === model) throw e
@@ -74,7 +91,7 @@ const groq: Provider = {
   available: async () => !!(await kv.get('groqKey')),
   async complete({ system, prompt, json }) {
     const model = (await kv.get<string>('groqModel')) || AI_DEFAULTS.groqModel
-    const j = await post('https://api.groq.com/openai/v1/chat/completions',
+    const j = await post('Groq', 'https://api.groq.com/openai/v1/chat/completions',
       { Authorization: `Bearer ${await kv.get<string>('groqKey')}` }, {
         model, temperature: .4,
         ...(model.startsWith('openai/gpt-oss') ? { reasoning_effort: 'low' } : {}),   // Denk-Tokens zählen ins Minutenlimit
@@ -100,7 +117,7 @@ export async function complete<T = string>(r: AiRequest, parse: (text: string) =
   for (const p of PROVIDERS) {
     if (!(await p.available())) continue
     try { return { data: parse(await p.complete(r)), provider: p.name } }
-    catch (e) { errors.push(`${p.name}: ${(e as Error).message}`) }
+    catch (e) { errors.push(`${p.name}: ${(e as Error).message}`); status(`${p.name} fehlgeschlagen (${(e as Error).message.slice(0, 60)}) – nächster Anbieter`) }
   }
   throw new Error(errors.length ? 'KI nicht erreichbar – ' + errors.join(' | ') : 'Kein KI-Schlüssel eingetragen')
 }

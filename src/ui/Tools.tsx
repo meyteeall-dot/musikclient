@@ -38,6 +38,11 @@ function AccuracyPanel({ onError }: { onError: (m: string) => void }) {
     setProg(null)
   }
   const secs = prog ? Math.floor((Date.now() - prog.t0) / 1000) : 0
+  const [ai, setAi] = useState<{ text: string; at: number } | null>(null)
+  useEffect(() => {
+    const on = (e: Event) => setAi((e as CustomEvent).detail)
+    addEventListener('ai-status', on); return () => removeEventListener('ai-status', on)
+  }, [])
   return <section className="panel glass">
     <h2>Trefferquote</h2>
     <p className="cap left">Die App nimmt zufällige Songs aus deinen Playlists (je Playlist höchstens einen), tut so, als wären sie neu, und prüft, ob sie die richtige Playlist vorschlägt. Kostet nur KI-Anfragen (≈ 2 pro Song), keine bei Spotify.</p>
@@ -53,7 +58,8 @@ function AccuracyPanel({ onError }: { onError: (m: string) => void }) {
     {prog && <ul className="steps">
       {prog.steps.map((s, i) => <li key={i} className={s.failed ? 'fail' : s.top1 ? 'ok' : s.top3 ? 'mid' : 'no'}>
         <span>{s.failed ? '!' : s.top1 ? '✓' : s.top3 ? '≈' : '✕'}</span>{s.song}{s.failed && <small>{s.failed}</small>}</li>)}
-      {prog.done < prog.total && <li className="run"><span>…</span>prüfe Song {prog.done + 1} von {prog.total} · läuft seit {Math.floor(secs / 60)}:{String(secs % 60).padStart(2, '0')}</li>}
+      {prog.done < prog.total && <li className="run"><span>…</span>prüfe Song {prog.done + 1} von {prog.total} · läuft seit {Math.floor(secs / 60)}:{String(secs % 60).padStart(2, '0')}
+        {ai && <small>{ai.text} … {Math.floor((Date.now() - ai.at) / 1000)} s</small>}</li>}
     </ul>}
     {prog && <p className="cap left">Pro Song etwa 10–30 Sekunden. Bildschirm dabei anlassen – im Hintergrund pausiert der Browser.</p>}
     {err && !prog && <p className="cap left err">Messung abgebrochen: {err}</p>}
