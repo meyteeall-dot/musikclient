@@ -9,7 +9,7 @@ import { startWebPlayer } from '../spotify/player'
 import { accessToken, handleRedirect, login, logout, redirectUri } from '../spotify/auth'
 import { glassScroll } from './glass/scroll'
 import { exportData, importData, persisted } from '../data/backup'
-import { testSound } from '../features/sound'
+import { estimateSound, findAlternates, soundStats, syncSound } from '../features/sound'
 import { CoverRow } from './Cover'
 import { Player } from './Player'
 import { PlaylistView } from './PlaylistView'
@@ -54,12 +54,19 @@ export function App() {
         setStatus(`${t.done} eingelesen` + (t.blocked ? ` · ${t.blocked} gesperrt` : ''))
         await load()
       }
+      try {   // Klangdaten: Fehler hier bremsen den Rest des Abgleichs nicht
+        const n = await syncSound((i, all) => all && setStatus(`Klang ${i}/${all}`))
+        if (n) setStatus('Klang eingelesen')
+      } catch (e) { console.warn('Klangdaten:', e) }
       if (await hasAi()) {
         try {
           const n = await buildProfiles((i, all) => all && setStatus(`Profile ${i}/${all}`))
           if (n) { setStatus('Profile aktuell'); await load() }
         } catch (e) { await load(); setStatus('Profile unvollständig'); setError((e as Error).message) }   // fertige Stapel bleiben gespeichert, Rest beim nächsten Abgleich
+        try { if (await estimateSound((i, all) => all && setStatus(`Klang schätzen ${i}/${all}`))) setStatus('Klang aktuell') }
+        catch (e) { console.warn('Klang-Schätzung:', e) }
       }
+      findAlternates().catch(e => console.warn('Andere Versionen:', e))   // im Hintergrund, gedeckelt
     } catch (e) {
       if (e instanceof NotLoggedIn) setLoggedIn(false)
       else if (e instanceof RateLimited) setStatus('Spotify-Limit · pausiert')
@@ -266,7 +273,7 @@ function Settings(p: { loggedIn: boolean; onLogout: () => void; onError: (m: str
     </section>
     <AiKeys onSaved={p.onAiSaved} />
     <Backup onError={p.onError} />
-    <SoundTest />
+    <SoundStatus />
     <Look />
     <p className="cap">Alle Daten und Schlüssel bleiben nur auf diesem Gerät gespeichert.</p>
     <p className="cap">Version vom {new Date(__BUILD__).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' })}</p>
@@ -350,17 +357,14 @@ function Backup({ onError }: { onError: (m: string) => void }) {
   </section>
 }
 
-/** Test: liefert ReccoBeats Klangdaten für deine Songs, direkt aus dem Browser? */
-function SoundTest() {
-  const [lines, setLines] = useState<string[] | null>(null)
-  const [err, setErr] = useState('')
-  const [busy, setBusy] = useState(false)
-  const run = () => { setBusy(true); setErr(''); setLines(null); testSound().then(setLines, e => setErr(e.message)).finally(() => setBusy(false)) }
+/** Klangdaten-Abdeckung der Sammlung: echt (ReccoBeats), von der KI geschätzt, noch offen. */
+function SoundStatus() {
+  const [st, setSt] = useState<{ echt: number; schätzung: number; fehlt: number } | null>(null)
+  useEffect(() => { soundStats().then(setSt) }, [])
+  const all = st ? st.echt + st.schätzung + st.fehlt : 0
   return <section className="panel glass">
-    <h2>Klangdaten (Test)</h2>
-    <p className="cap left">Fragt für 5 zufällige Songs Tempo, Energie, Tanzbarkeit und Stimmung beim kostenlosen Dienst ReccoBeats ab. Klappt das, kann die App Songs nach echtem Klang vergleichen.</p>
-    {lines && <ul className="dupes">{lines.map((l, i) => <li key={i}><small>{l}</small></li>)}</ul>}
-    {err && <p className="cap left err">Fehlgeschlagen: {err}</p>}
-    <div className="actions"><button className="pill glass hot" disabled={busy} onClick={run}>{busy ? 'Frage ab …' : 'Klangdaten testen'}</button></div>
+    <h2>Klangdaten</h2>
+    <p className="cap left">Tempo, Energie, Tanzbarkeit und Stimmung jedes Songs – damit vergleicht die App Songs nach echtem Klang. Quelle: ReccoBeats (kostenlos). Fehlende schätzt die KI; beim Abgleich sucht die App nach und nach andere Versionen mit echten Daten.</p>
+    {st && <p className="cap left">{all ? `${st.echt} echt · ${st.schätzung} geschätzt · ${st.fehlt} offen (von ${all} Songs)` : 'Noch keine – kommt beim nächsten Abgleich.'}</p>}
   </section>
 }

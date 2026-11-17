@@ -48,16 +48,27 @@ export interface Profile {
 /** rejected: „passt auf keinen Fall“ statt hinzugefügt. */
 export interface Choice { id?: number; trackId: string; artistIds: string[]; playlistId: string; suggested: string[]; at: number; rejected?: boolean }
 
+/** Klangdaten eines Songs (0–1, Tempo in BPM). src: echt (ReccoBeats), schätzung (KI), fehlt (noch nichts). */
+export interface Sound {
+  id: string; src: 'echt' | 'schätzung' | 'fehlt'; at: number
+  tempo?: number; energy?: number; danceability?: number; valence?: number; acousticness?: number; instrumentalness?: number; speechiness?: number
+  /** echte Daten über eine andere Spotify-Version desselben Songs */
+  alt?: string
+  /** andere Versionen schon gesucht */
+  tried?: boolean
+}
+
 interface Schema extends DBSchema {
   kv: { key: string; value: unknown }
   playlists: { key: string; value: Playlist }
   tracks: { key: string; value: PlaylistTracks }
   profiles: { key: string; value: Profile }
   choices: { key: number; value: Choice }
+  sound: { key: string; value: Sound }
 }
 
 // Neue Stores (Tracks, Profile, Wahl-Historie) kommen als weitere Versionen hier dazu.
-export const db = openDB<Schema>('musikclient', 4, {
+export const db = openDB<Schema>('musikclient', 5, {
   upgrade(d, old) {
     if (old < 1) {
       d.createObjectStore('kv')
@@ -66,6 +77,7 @@ export const db = openDB<Schema>('musikclient', 4, {
     if (old < 2) d.createObjectStore('tracks', { keyPath: 'id' })
     if (old < 3) d.createObjectStore('profiles', { keyPath: 'id' })
     if (old < 4) d.createObjectStore('choices', { keyPath: 'id', autoIncrement: true })
+    if (old < 5) d.createObjectStore('sound', { keyPath: 'id' })
   },
 })
 

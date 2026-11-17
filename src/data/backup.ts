@@ -2,7 +2,7 @@
    nichts neu bei Spotify eingelesen und keine Profile neu erzeugt werden müssen. Ohne Anmeldedaten und KI-Schlüssel. */
 import { db, kv } from './db'
 
-const STORES = ['playlists', 'tracks', 'profiles', 'choices'] as const
+const STORES = ['playlists', 'tracks', 'profiles', 'choices', 'sound'] as const
 const KEYS = ['excluded', 'inboxDone', 'accuracy', 'theme', 'glass', 'clientId', 'geminiModel', 'groqModel', 'user']   // keine Tokens, keine Schlüssel
 
 /** Browser bitten, die Daten nicht von selbst zu löschen. true = zugesagt. */
@@ -30,6 +30,7 @@ export async function importData(file: File) {
   const d = await db
   const tx = d.transaction([...STORES], 'readwrite')   // alles oder nichts: bricht etwas ab, bleibt der alte Stand
   for (const s of STORES) {
+    if (!Array.isArray(data[s])) continue   // ältere Sicherung ohne diesen Teil: vorhandene Daten behalten
     await tx.objectStore(s).clear()
     for (const v of data[s] ?? []) await tx.objectStore(s).put(v)
   }
