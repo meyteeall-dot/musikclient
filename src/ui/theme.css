@@ -198,6 +198,7 @@ label.pill{display:inline-flex;align-items:center;cursor:pointer}
 .cap.err{color:#ff9a8a}
 .row.accent{background:linear-gradient(145deg,rgba(var(--acc),.16),rgba(var(--acc),.05))}   /* ohne WebGL; mit WebGL tönt der Shader */
 .gl .row.accent{background:none}
+.pill.mini{align-self:flex-start;min-height:34px;padding:6px 12px;font-size:12px;margin-top:4px}
 .sugg{gap:10px}
 .sugg-head{display:flex;align-items:center;gap:12px}
 .sugg-head .never{margin-left:auto;width:32px;height:32px;flex:none;border-radius:50%;font-size:14px;color:var(--muted);

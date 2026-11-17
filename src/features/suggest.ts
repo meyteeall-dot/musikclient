@@ -3,6 +3,7 @@
 import { completeJson, hasAi, status } from '../ai'
 import { db, kv, type Choice, type Playlist, type Profile, type Track } from '../data/db'
 import { addToPlaylist } from '../spotify/api'
+import { getLessons, type Lesson } from './lessons'
 
 export interface Suggestion { playlist: Playlist; reason: string }
 export interface SuggestResult { suggestions: Suggestion[]; contains: Playlist[]; provider: string }
@@ -13,14 +14,17 @@ const SHORTLIST = 8   // Stufe 1 wählt so viele Kandidaten, Stufe 2 sieht von i
 const SONGS_PER_CAND = 25
 
 /** Lokale Punkte einer Playlist für einen Song. Ablehnungen („auf keinen Fall") desselben Künstlers ziehen stark ab. */
-export function score(song: Track, tracks: Track[], prof: Profile | undefined, choices: Choice[], playlistId: string) {
+export function score(song: Track, tracks: Track[], prof: Profile | undefined, choices: Choice[], playlistId: string, lessons: Lesson[] = []) {
   const ids = new Set(song.artistIds), sameArtist = (c: Choice) => c.artistIds.some(a => ids.has(a))
   const k = tracks.filter(t => t.artistIds.some(a => ids.has(a))).length                      // Songs desselben Künstlers
   const mine = choices.filter(c => c.playlistId === playlistId && !c.rejected)
   const w = mine.filter(sameArtist).length                                                   // früher gewählt, gleicher Künstler
   const no = choices.filter(c => c.playlistId === playlistId && c.rejected && sameArtist(c)).length
   const y = prof?.years, era = !!(song.year && y && song.year >= y[0] - 3 && song.year <= y[1] + 3)
-  return { k, w, era, score: Math.min(k, 5) * 2 + w * 3 - no * 4 + (era ? 2 : 0) + Math.min(mine.length, 6) * .25 }
+  // Merksätze zum selben Künstler: hierher gehört (+), fälschlich hierher vorgeschlagen (−)
+  const same = lessons.filter(l => l.artistIds.some(a => ids.has(a)))
+  const lr = same.filter(l => l.right.includes(playlistId)).length, lw = same.filter(l => l.wrong === playlistId).length
+  return { k, w, era, score: Math.min(k, 5) * 2 + w * 3 - no * 4 + Math.min(lr, 3) * 2 - Math.min(lw, 3) * 2 + (era ? 2 : 0) + Math.min(mine.length, 6) * .25 }
 }
 
 /** Playlists, die nie vorgeschlagen werden (und kein KI-Profil brauchen). Lokal gespeichert, übersteht jeden Abgleich. */
@@ -65,12 +69,14 @@ export type Library = Awaited<ReturnType<typeof loadLibrary>>
 export async function loadLibrary() {
   status('lese Songs aus dem Speicher')
   const d = await db
-  const [all, profiles, choices, excluded, tracks] = await Promise.all([d.getAll('playlists'), d.getAll('profiles'), d.getAll('choices'), getExcluded(), d.getAll('tracks')])
-  return { all, profiles, choices, excluded, tracks: new Map(tracks.map(t => [t.id, t.tracks])) }
+  const [all, profiles, choices, excluded, tracks, lessons] = await Promise.all([d.getAll('playlists'), d.getAll('profiles'), d.getAll('choices'), getExcluded(), d.getAll('tracks'), getLessons()])
+  return { all, profiles, choices, excluded, lessons, tracks: new Map(tracks.map(t => [t.id, t.tracks])) }
 }
 
 async function compute(song: Track, opts: { test?: boolean; local?: boolean; lib?: Library }): Promise<SuggestResult> {
-  const { all, profiles, choices: allChoices, excluded, tracks: tracksOf } = opts.lib ?? await loadLibrary()
+  const { all, profiles, choices: allChoices, excluded, lessons: allLessons, tracks: tracksOf } = opts.lib ?? await loadLibrary()
+  const lessons = allLessons.filter(l => l.trackId !== song.id)   // den Song selbst nie aus seinem eigenen Merksatz „wissen“
+  const nameOf = new Map(all.map(p => [p.id, p.name]))
   status('berechne Punkte')
   const choices = opts.test ? allChoices.filter(c => c.trackId !== song.id) : allChoices
   const never = new Set(choices.filter(c => c.rejected && c.trackId === song.id).map(c => c.playlistId))
@@ -83,7 +89,7 @@ async function compute(song: Track, opts: { test?: boolean; local?: boolean; lib
       if (!opts.test) { contains.push(p); continue }
       tracks = tracks.filter(t => t.id !== song.id)
     }
-    cands.push({ p, prof: profOf.get(p.id), tracks, ...score(song, tracks, profOf.get(p.id), choices, p.id) })
+    cands.push({ p, prof: profOf.get(p.id), tracks, ...score(song, tracks, profOf.get(p.id), choices, p.id, lessons) })
   }
   cands.sort((a, b) => b.score - a.score)
 
@@ -106,9 +112,14 @@ ${lines}` })
       const idx = [...new Set((r1.data.top ?? []).filter(i => cands[i]))].slice(0, SHORTLIST)
       short = [...idx.map(i => cands[i]), ...cands.filter(c => c.score > 0).slice(0, 4)].filter((c, i, a) => a.indexOf(c) === i)
     }
+    // Merksätze aus früheren Fehlgriffen, je Playlist die 5 neuesten: so lernt die KI die Abgrenzung ähnlicher Playlists
+    const notes = (id: string) => {
+      const m = lessons.filter(l => l.right.includes(id) || l.wrong === id).slice(-5)
+      return m.length ? '\nMerke: ' + m.map(l => l.right.includes(id) ? `„${l.song}“ gehört hierher` : `„${l.song}“ gehört NICHT hierher, sondern nach ${l.right.map(r => nameOf.get(r)).join(' / ')}`).join('; ') : ''
+    }
     // Stufe 2: die engere Wahl mit echten Songs aus jeder Playlist – daran erkennt die KI den Stil viel genauer
     const blocks = short.map((c, i) => `[${i}] ${c.p.name}${c.prof ? ` – ${[c.prof.genres.join(', '), c.prof.era, c.prof.mood].filter(Boolean).join(' · ')}` : ''}${c.prof?.summary ? `\n${c.prof.summary}` : ''}${c.w ? `\nIch habe ${c.w}× Songs dieses Künstlers hierher gelegt.` : ''}
-Songs: ${sample(song, c.tracks, SONGS_PER_CAND).join('; ') || '(keine Songs bekannt)'}`).join('\n\n')
+Songs: ${sample(song, c.tracks, SONGS_PER_CAND).join('; ') || '(keine Songs bekannt)'}${notes(c.p.id)}`).join('\n\n')
     const res = await completeJson<{ suggestions: { i: number; reason: string }[] }>({ system: SYSTEM, prompt: `Song: ${songLine(song)}
 Wähle die 3 Playlists, in die dieser Song am besten passt, beste zuerst. Vergleiche mit den Songs, die schon drin sind. Begründe jede mit einem kurzen deutschen Satz (höchstens 15 Wörter), konkret zu Klang, Stimmung, Genre oder ähnlichen Songs.
 Format: {"suggestions":[{"i":0,"reason":"…"}]}
