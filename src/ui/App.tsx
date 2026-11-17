@@ -23,6 +23,7 @@ const SYNC_EVERY = 15 * 60 * 1000
 export function App() {
   const [tab, setTab] = useState<Tab>('search')
   const [openId, setOpenId] = useState<string | null>(null)
+  const [fresh, setFresh] = useState(0)   // erhöhen = aktuelle Ansicht neu aufbauen (Tipp auf den aktiven Tab)
   const [loggedIn, setLoggedIn] = useState<boolean | null>(null)
   const [playlists, setPlaylists] = useState<Playlist[]>([])
   const [profiles, setProfiles] = useState(new Map<string, Profile>())
@@ -114,7 +115,7 @@ export function App() {
 
       {error && <div className="panel glass error" onClick={() => setError('')}>{error}</div>}
 
-      <Scroll key={tab + (openId ?? '')}>
+      <Scroll key={`${tab}${openId ?? ''}${fresh}`}>
         {tab === 'search' && (loggedIn
           ? <Search onError={setError} onAdded={load} />
           : <div className="panel glass center"><p className="cap">Noch nicht mit Spotify verbunden.</p>
@@ -130,7 +131,7 @@ export function App() {
           onLogout={async () => { await logout(); setLoggedIn(false) }} />}
       </Scroll>
 
-      <Tabs tab={tab} onPick={t => { setTab(t); setOpenId(null) }} />
+      <Tabs tab={tab} onPick={t => { setTab(t); setOpenId(null); setFresh(f => f + 1) }} />
     </div>
   )
 }
@@ -222,7 +223,7 @@ function Tabs({ tab, onPick }: { tab: Tab; onPick: (t: Tab) => void }) {
     onPointerDown={down} onPointerMove={move} onPointerUp={end} onPointerCancel={end}>
     <span className="ind" ref={ind} />
     {TABS.map((t, i) => <button key={t} className={'tab' + (i === near ? ' near' : '')} role="tab" aria-selected={t === tab}
-      onClick={e => { if (e.detail === 0) onPick(t) }}>{/* detail 0 = Tastatur; Tippen wechselt bewusst nicht */}
+      onClick={e => { if (e.detail === 0 || t === tab) onPick(t) }}>{/* Tipp nur auf den aktiven Tab = neu laden; wechseln per Ziehen (oder Tastatur) */}
       <svg viewBox="0 0 24 24">{TAB_UI[t][1]}</svg><span className="lbl">{TAB_UI[t][0]}</span></button>)}
   </nav>
 }
