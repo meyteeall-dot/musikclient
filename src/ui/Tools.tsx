@@ -25,15 +25,19 @@ const pct = (a: number, n: number) => `${Math.round(a / n * 100)} %`
 function AccuracyPanel({ onError }: { onError: (m: string) => void }) {
   const [res, setRes] = useState<Accuracy | null>(null)
   const [n, setN] = useState(10)
-  const [prog, setProg] = useState<{ done: number; total: number; steps: Step[] } | null>(null)
+  const [prog, setProg] = useState<{ done: number; total: number; steps: Step[]; t0: number } | null>(null)
+  const [err, setErr] = useState('')
+  const [, tick] = useState(0)
   useEffect(() => { lastAccuracy().then(r => r && setRes(r)) }, [])
+  useEffect(() => { if (!prog) return; const id = setInterval(() => tick(x => x + 1), 1000); return () => clearInterval(id) }, [!!prog])
   const run = async () => {
-    setProg({ done: 0, total: n, steps: [] })
+    setErr(''); setProg({ done: 0, total: n, steps: [], t0: Date.now() })
     try {
-      setRes(await measureAccuracy(n, (done, total, step) => setProg(p => ({ done, total, steps: step ? [...(p?.steps ?? []), step] : p?.steps ?? [] }))))
-    } catch (e) { onError((e as Error).message) }
+      setRes(await measureAccuracy(n, (done, total, step) => setProg(p => p && ({ ...p, done, total, steps: step ? [...p.steps, step] : p.steps }))))
+    } catch (e) { setErr((e as Error).message); onError((e as Error).message) }
     setProg(null)
   }
+  const secs = prog ? Math.floor((Date.now() - prog.t0) / 1000) : 0
   return <section className="panel glass">
     <h2>Trefferquote</h2>
     <p className="cap left">Die App nimmt zufällige Songs aus deinen Playlists (je Playlist höchstens einen), tut so, als wären sie neu, und prüft, ob sie die richtige Playlist vorschlägt. Kostet nur KI-Anfragen (≈ 2 pro Song), keine bei Spotify.</p>
@@ -49,8 +53,10 @@ function AccuracyPanel({ onError }: { onError: (m: string) => void }) {
     {prog && <ul className="steps">
       {prog.steps.map((s, i) => <li key={i} className={s.failed ? 'fail' : s.top1 ? 'ok' : s.top3 ? 'mid' : 'no'}>
         <span>{s.failed ? '!' : s.top1 ? '✓' : s.top3 ? '≈' : '✕'}</span>{s.song}{s.failed && <small>{s.failed}</small>}</li>)}
-      {prog.done < prog.total && <li className="run"><span>…</span>prüfe Song {prog.done + 1} von {prog.total}</li>}
+      {prog.done < prog.total && <li className="run"><span>…</span>prüfe Song {prog.done + 1} von {prog.total} · läuft seit {Math.floor(secs / 60)}:{String(secs % 60).padStart(2, '0')}</li>}
     </ul>}
+    {prog && <p className="cap left">Pro Song etwa 10–30 Sekunden. Bildschirm dabei anlassen – im Hintergrund pausiert der Browser.</p>}
+    {err && !prog && <p className="cap left err">Messung abgebrochen: {err}</p>}
     <div className="actions">
       {[10, 20].map(x => <button key={x} className={'pill glass' + (n === x ? ' hot' : '')} disabled={!!prog} onClick={() => setN(x)}>{x} Songs</button>)}
       <button className="pill glass hot" disabled={!!prog} onClick={run}>{prog ? `Prüfe … ${prog.done}/${prog.total}` : res ? 'Erneut messen' : 'Jetzt messen'}</button>

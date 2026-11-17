@@ -195,6 +195,7 @@ a.pill{display:inline-flex;align-items:center;text-decoration:none;color:inherit
 .steps small{flex-basis:100%;padding-left:calc(1.2em + 8px);color:var(--muted);font-size:12px}
 .steps .run{color:var(--muted)}
 label.pill{display:inline-flex;align-items:center;cursor:pointer}
+.cap.err{color:#ff9a8a}
 .sugg{gap:10px}
 .sugg-head{display:flex;align-items:center;gap:12px}
 .sugg-head .never{margin-left:auto;width:32px;height:32px;flex:none;border-radius:50%;font-size:14px;color:var(--muted);

@@ -42,8 +42,9 @@ export async function api<T = any>(path: string, init: RequestInit = {}, retry =
   }
   if (r.ok && pause.step) await clearPause()
   if (!r.ok) throw new ApiError(r.status, `Spotify ${r.status}: ${(await r.text()).slice(0, 200)}`)
-  const txt = await r.text()   // Player-Befehle antworten teils ohne Inhalt
-  return (txt ? JSON.parse(txt) : undefined) as T
+  const txt = await r.text()
+  // Player-Befehle antworten mal leer, mal mit einer losen Kennung statt JSON (z. B. "oHKPhT99z9…"): beides ist Erfolg
+  try { return (txt ? JSON.parse(txt) : undefined) as T } catch { return undefined as T }
 }
 
 /** Alle Seiten eines Paging-Objekts einsammeln. */

@@ -94,17 +94,21 @@ export async function hasAi() {
   return false
 }
 
-export async function complete(r: AiRequest) {
+/** parse: prüft die Antwort; ist sie unbrauchbar, kommt der nächste Anbieter dran. */
+export async function complete<T = string>(r: AiRequest, parse: (text: string) => T = t => t as T) {
   const errors: string[] = []
   for (const p of PROVIDERS) {
     if (!(await p.available())) continue
-    try { return { text: await p.complete(r), provider: p.name } }
+    try { return { data: parse(await p.complete(r)), provider: p.name } }
     catch (e) { errors.push(`${p.name}: ${(e as Error).message}`) }
   }
   throw new Error(errors.length ? 'KI nicht erreichbar – ' + errors.join(' | ') : 'Kein KI-Schlüssel eingetragen')
 }
 
 export async function completeJson<T>(r: AiRequest): Promise<{ data: T; provider: string }> {
-  const { text, provider } = await complete({ ...r, json: true })
-  return { data: JSON.parse(text.replace(/^```(json)?\s*|\s*```$/g, '')), provider }
+  return complete<T>({ ...r, json: true }, text => {
+    // Modelle packen JSON gern in ```-Blöcke oder schreiben einen Satz davor: vom ersten { bis zur letzten } lesen
+    try { return JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1)) }
+    catch { throw new Error('Antwort war kein lesbares JSON') }
+  })
 }
