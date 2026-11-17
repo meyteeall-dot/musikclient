@@ -196,6 +196,8 @@ a.pill{display:inline-flex;align-items:center;text-decoration:none;color:inherit
 .steps .run{color:var(--muted)}
 label.pill{display:inline-flex;align-items:center;cursor:pointer}
 .cap.err{color:#ff9a8a}
+.row.accent{background:linear-gradient(145deg,rgba(var(--acc),.16),rgba(var(--acc),.05))}   /* ohne WebGL; mit WebGL tönt der Shader */
+.gl .row.accent{background:none}
 .sugg{gap:10px}
 .sugg-head{display:flex;align-items:center;gap:12px}
 .sugg-head .never{margin-left:auto;width:32px;height:32px;flex:none;border-radius:50%;font-size:14px;color:var(--muted);
@@ -210,11 +212,11 @@ input[type=search]{-webkit-appearance:none;appearance:none}
 
 /* ---------- Tabbar: gleitende Glas-Linse ---------- */
 .tabs{display:grid;grid-template-columns:repeat(var(--n),1fr);gap:4px;padding:6px;border-radius:32px}
-.ind{position:absolute;top:6px;bottom:6px;left:6px;width:calc((100% - 12px - (var(--n) - 1) * 4px) / var(--n));border-radius:26px;pointer-events:none;
+.ind{position:absolute;top:6px;bottom:6px;left:0;width:56px;border-radius:26px;pointer-events:none;
   background:linear-gradient(160deg,rgba(255,255,255,.26),rgba(255,255,255,.08));
   box-shadow:inset 0 0 0 1px rgba(255,255,255,.2),inset 0 1.5px 0 rgba(255,255,255,.55),
              inset 0 -10px 16px -10px rgba(var(--acc),.4),0 8px 18px -8px rgba(0,0,0,.55);
-  translate:calc(var(--i,0) * (100% + 4px)) 0;transition:translate .6s cubic-bezier(.25,1.12,.4,1)}
+  transition:translate .6s cubic-bezier(.25,1.12,.4,1)}
 .tab{position:relative;display:flex;flex-direction:column;align-items:center;gap:4px;padding:9px 2px 8px;border-radius:26px;
   color:var(--muted);font-size:11px;font-weight:700;letter-spacing:.02em;transition:color .35s}
 .tab svg{width:22px;height:22px;stroke-width:1.6;transition:transform .6s var(--spring),filter .4s}
@@ -222,9 +224,10 @@ input[type=search]{-webkit-appearance:none;appearance:none}
 .tab[aria-selected="true"],.gl .tab[aria-selected="true"]{color:var(--accent-hot)}
 .tab[aria-selected="true"] svg{filter:drop-shadow(0 0 6px rgba(var(--acc),.55))}
 .gl .ind{background:none;box-shadow:none}
-.tabs.drag .ind{transition:scale .12s ease-out}
+.tabs.drag .ind{transition:scale .12s ease-out}   /* beim Ziehen folgt die Linse dem Finger ohne Verzögerung */
 .tabs.drag .tab[aria-selected="true"]{color:var(--muted)}
 .tabs.drag .tab.near,.gl .tabs.drag .tab.near{color:var(--accent-hot)}
-.ind{transition:translate .6s cubic-bezier(.25,1.12,.4,1),scale .45s var(--spring)}
+.ind{transition:translate .6s cubic-bezier(.25,1.12,.4,1),width .45s var(--spring),scale .45s var(--spring)}
+.tab .lbl{white-space:nowrap}
 
 @media (prefers-reduced-motion:reduce){.aura,.brand .dot{animation:none}.aura{translate:none}}

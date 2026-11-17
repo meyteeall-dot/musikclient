@@ -60,7 +60,7 @@ const BIG = '[data-big]'                  // große Flächen: Spur hinter dem Fi
 interface Lens {
   el: HTMLElement; r: [number, boolean] | null; fixed: boolean; big: boolean; follow: boolean; a: number
   dx: number; dy: number; vx: number; vy: number; s: number; sv: number; ax: number; ay: number
-  grab: number | null; p0x: number; p0y: number; px: number; py: number; pt: number; fvx: number; fvy: number
+  grab: number | null; pend: { id: number; at: number } | null; p0x: number; p0y: number; px: number; py: number; pt: number; fvx: number; fvy: number
   cdx: number; cdy: number; g: number; seen: number
 }
 const lenses = new WeakMap<HTMLElement, Lens>()
@@ -69,7 +69,7 @@ function lensOf(el: HTMLElement): Lens {
   if (!L) lenses.set(el, L = {
     el, r: null, fixed: el.matches(FIXED), big: el.matches(BIG), follow: !el.matches(`${BIG}, .ind, .gs-track`), a: 0,
     dx: 0, dy: 0, vx: 0, vy: 0, s: 0, sv: 0, ax: 0, ay: 0, grab: null, p0x: 0, p0y: 0, px: 0, py: 0, pt: 0, fvx: 0, fvy: 0,
-    cdx: 0, cdy: 0, g: 0, seen: -1,
+    cdx: 0, cdy: 0, g: 0, seen: -1, pend: null,
   })
   return L
 }
@@ -155,7 +155,8 @@ export function initGlass(cv: HTMLCanvasElement) {
     const L = lensOf(el), r = el.getBoundingClientRect()
     L.ax = e.clientX - (r.left + r.width / 2); L.ay = e.clientY - (r.top + r.height / 2)
     L.p0x = L.px = e.clientX; L.p0y = L.py = e.clientY; L.pt = e.timeStamp; L.fvx = L.fvy = 0
-    L.grab = e.pointerId; grabs.set(e.pointerId, L)
+    // Noch nicht festhalten: erst wenn der Finger kurz ruht. Wer sofort wischt, scrollt nur – das Glas bleibt ruhig
+    L.pend = { id: e.pointerId, at: performance.now() }; grabs.set(e.pointerId, L)
   }, true)
   document.addEventListener('pointermove', e => {
     const L = grabs.get(e.pointerId)
@@ -164,9 +165,16 @@ export function initGlass(cv: HTMLCanvasElement) {
     L.fvx = L.fvx * .7 + (e.clientX - L.px) / dt * .3; L.fvy = L.fvy * .7 + (e.clientY - L.py) / dt * .3
     L.px = e.clientX; L.py = e.clientY; L.pt = e.timeStamp
     // Wischen scrollt (überall auf dem Bildschirm): Finger bewegt den Inhalt, nicht das Glas
-    if (Math.hypot(L.px - L.p0x, L.py - L.p0y) > 10 && !L.fixed) { L.grab = null; grabs.delete(e.pointerId) }
+    const far = Math.hypot(L.px - L.p0x, L.py - L.p0y)
+    if ((L.pend && far > 6) || (far > 10 && !L.fixed)) { L.pend = null; L.grab = null; grabs.delete(e.pointerId) }
   }, true)
-  const release = (e: PointerEvent) => { const L = grabs.get(e.pointerId); if (L) { grabs.delete(e.pointerId); L.grab = null } }
+  const release = (e: PointerEvent) => {
+    const L = grabs.get(e.pointerId)
+    if (!L) return
+    grabs.delete(e.pointerId)
+    if (L.pend && e.type === 'pointerup' && !RM) L.sv += 6   // kurzer Tipp: kleines Nachfedern statt voller Delle
+    L.pend = null; L.grab = null
+  }
   document.addEventListener('pointerup', release, true); document.addEventListener('pointercancel', release, true)
 
   let w = 0, h = 0, dpr = 1, gx = 0, gy = 0, last = 0, frame = 0
@@ -285,6 +293,7 @@ export function initGlass(cv: HTMLCanvasElement) {
       L.seen = frame
       L.a = RM ? 1 : Math.min(1, L.a + dt / .38)
       const hw = r.width / 2, hh = r.height / 2, cx = r.left + hw, cy = r.top + hh
+      if (L.pend && performance.now() - L.pend.at > 110) { L.grab = L.pend.id; L.pend = null }   // Finger ruht: jetzt festhalten
       if (!RM) physics(L, hw, hh, cx, cy, dt)
       const S = 1 + (L.fixed ? .02 : .07) * L.s
       const ext = Math.hypot(L.dx, L.dy) + Math.max(hw, hh) * Math.abs(S - 1)
@@ -300,6 +309,7 @@ export function initGlass(cv: HTMLCanvasElement) {
         gl!.uniform4f(U.uCov, (q.left + q.width / 2) * dpr, (q.top + q.height / 2) * dpr, q.width / 2 * dpr, q.height / 2 * dpr)
         gl!.uniform1f(U.uCovR, radiusOf(cov) * dpr)
       } else gl!.uniform4f(U.uCov, 0, 0, 0, 0)
+      gl!.uniform1f(U.uTint, el.hasAttribute('data-accent') ? Math.max(G.tint, .3) : G.tint)   // z. B. ignorierte Playlists: leicht in der Akzentfarbe
       gl!.uniform4f(U.uR, cx * dpr, cy * dpr, hw * dpr, hh * dpr)
       gl!.uniform3f(U.uP, rad * dpr, bev * dpr, a)
       const sc = el.parentElement?.closest('.scroll')   // Scrollbereich: außerhalb kein Glas, am Rand weicher Verlauf

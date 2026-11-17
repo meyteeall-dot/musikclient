@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { db, kv, type Playlist, type Profile } from '../data/db'
 import { syncPlaylists, syncTracks } from '../data/sync'
 import { AI_DEFAULTS, hasAi } from '../ai'
@@ -149,28 +149,63 @@ const TAB_UI: Record<Tab, [string, React.ReactNode]> = {
   settings: ['Optionen', <><path d="M4 8h9M17 8h3M4 16h3M11 16h9" /><circle cx="15" cy="8" r="2" /><circle cx="9" cy="16" r="2" /></>],
 }
 
-/** Tableiste mit gleitender Glaslinse (aus Druckpunkt): antippen oder die Linse seitlich ziehen. */
+/** Tableiste mit gleitender Glaslinse (aus Druckpunkt). Wechseln nur, indem man die Linse greift und zieht;
+    ein Tipp auf einen anderen Tab tut nichts (Tastatur geht weiter). Die Linse passt sich der Breite des Tab-Namens an. */
 function Tabs({ tab, onPick }: { tab: Tab; onPick: (t: Tab) => void }) {
   const nav = useRef<HTMLElement>(null), ind = useRef<HTMLSpanElement>(null)
-  const swp = useRef<{ id: number; x0: number; x: number; t: number; v: number; on: boolean; near: number } | null>(null)
+  const geo = useRef<{ c: number; w: number }[]>([])   // je Tab: Mitte und Linsenbreite, relativ zur Leiste
+  const swp = useRef<{ id: number; x0: number; x: number; t: number; v: number; off: number; on: boolean; near: number } | null>(null)
+  const cur = useRef(TABS.indexOf(tab)); cur.current = TABS.indexOf(tab)
   const [near, setNear] = useState(-1)
-  const n = TABS.length
 
-  const down = (e: React.PointerEvent) => { swp.current = { id: e.pointerId, x0: e.clientX, x: e.clientX, t: e.timeStamp, v: 0, on: false, near: -1 } }
+  // pos darf zwischen zwei Tabs liegen (beim Ziehen): Breite und Lage werden dazwischen gemischt
+  const place = (pos: number) => {
+    const g = geo.current
+    if (!g.length || !ind.current) return
+    const i = Math.floor(pos), a = g[i], b = g[Math.min(g.length - 1, i + 1)], f = pos - i
+    const w = a.w + (b.w - a.w) * f, c = a.c + (b.c - a.c) * f
+    ind.current.style.width = `${w}px`; ind.current.style.translate = `${c - w / 2}px 0`
+  }
+  const posAt = (x: number) => {   // Fingerposition → Tab-Position (mit Bruchteil)
+    const g = geo.current
+    if (x <= g[0].c) return 0
+    for (let k = 0; k < g.length - 1; k++) if (x <= g[k + 1].c) return k + (x - g[k].c) / (g[k + 1].c - g[k].c)
+    return g.length - 1
+  }
+  useLayoutEffect(() => {
+    const measure = () => {
+      const nr = nav.current!.getBoundingClientRect()
+      geo.current = [...nav.current!.querySelectorAll<HTMLElement>('.tab')].map(t => {
+        const r = t.getBoundingClientRect(), lw = t.querySelector('.lbl')!.getBoundingClientRect().width
+        return { c: r.left + r.width / 2 - nr.left, w: Math.min(r.width + 8, Math.max(54, lw + 24)) }
+      })
+      if (!swp.current?.on) place(cur.current)
+    }
+    measure()
+    document.fonts?.ready.then(measure)   // Schrift lädt nach: Breiten neu messen
+    const ro = new ResizeObserver(measure); ro.observe(nav.current!)
+    return () => ro.disconnect()
+  }, [])
+  useLayoutEffect(() => { if (!swp.current?.on) place(cur.current) }, [tab])
+
+  const down = (e: React.PointerEvent) => {
+    const ir = ind.current!.getBoundingClientRect()
+    if (e.clientX < ir.left - 6 || e.clientX > ir.right + 6) return   // nur die Linse selbst lässt sich greifen
+    swp.current = { id: e.pointerId, x0: e.clientX, x: e.clientX, t: e.timeStamp, v: 0, off: e.clientX - (ir.left + ir.width / 2), on: false, near: cur.current }
+  }
   const move = (e: React.PointerEvent) => {
     const s = swp.current, el = nav.current!
     if (!s || e.pointerId !== s.id) return
     if (!s.on) {
-      if (Math.abs(e.clientX - s.x0) < 8) return
-      s.on = true; el.setPointerCapture(e.pointerId); el.classList.add('drag')   // Capture: danach kein Klick auf einen Tab
+      if (Math.abs(e.clientX - s.x0) < 6) return
+      s.on = true; el.setPointerCapture(e.pointerId); el.classList.add('drag')
     }
-    const r = el.getBoundingClientRect(), iw = (r.width - 12 - (n - 1) * 4) / n
-    const pos = Math.max(0, Math.min(n - 1, (e.clientX - r.left - 6 - iw / 2) / (iw + 4)))
+    const pos = posAt(e.clientX - s.off - el.getBoundingClientRect().left)
     const dt = Math.max(1, e.timeStamp - s.t)
     s.v = s.v * .6 + (e.clientX - s.x) / dt * .4; s.x = e.clientX; s.t = e.timeStamp
-    const st = Math.min(.35, Math.abs(s.v) * .18)   // schnell gezogen: Linse dehnt sich in Zugrichtung
-    el.style.setProperty('--i', String(pos))
-    ind.current!.style.scale = `${1.08 + st} ${1.08 - st * .5}`
+    const st = Math.min(.3, Math.abs(s.v) * .15)   // schnell gezogen: Linse dehnt sich in Zugrichtung
+    place(pos)
+    ind.current!.style.scale = `${1.06 + st} ${1.06 - st * .5}`
     if (Math.round(pos) !== s.near) { s.near = Math.round(pos); setNear(s.near); navigator.vibrate?.(4) }
   }
   const end = (e: React.PointerEvent) => {
@@ -179,23 +214,24 @@ function Tabs({ tab, onPick }: { tab: Tab; onPick: (t: Tab) => void }) {
     swp.current = null
     if (!s.on) return
     nav.current!.classList.remove('drag'); ind.current!.style.scale = ''
-    nav.current!.style.setProperty('--i', String(s.near))   // React setzt --i nur bei geändertem Tab neu
-    setNear(-1); onPick(TABS[s.near])
+    place(s.near); setNear(-1)
+    if (s.near !== cur.current) onPick(TABS[s.near])
   }
 
-  return <nav ref={nav} className="tabs glass" role="tablist" style={{ '--n': n, '--i': TABS.indexOf(tab) } as React.CSSProperties}
+  return <nav ref={nav} className="tabs glass" role="tablist" style={{ '--n': TABS.length } as React.CSSProperties}
     onPointerDown={down} onPointerMove={move} onPointerUp={end} onPointerCancel={end}>
     <span className="ind" ref={ind} />
-    {TABS.map((t, i) => <button key={t} className={'tab' + (i === near ? ' near' : '')} role="tab" aria-selected={t === tab} onClick={() => onPick(t)}>
-      <svg viewBox="0 0 24 24">{TAB_UI[t][1]}</svg>{TAB_UI[t][0]}</button>)}
+    {TABS.map((t, i) => <button key={t} className={'tab' + (i === near ? ' near' : '')} role="tab" aria-selected={t === tab}
+      onClick={e => { if (e.detail === 0) onPick(t) }}>{/* detail 0 = Tastatur; Tippen wechselt bewusst nicht */}
+      <svg viewBox="0 0 24 24">{TAB_UI[t][1]}</svg><span className="lbl">{TAB_UI[t][0]}</span></button>)}
   </nav>
 }
 
 function Playlists({ items, profiles, excluded, onOpen }: { items: Playlist[]; profiles: Map<string, Profile>; excluded: Set<string>; onOpen: (id: string) => void }) {
   return <ul className="list">
-    {items.map(p => {
+    {[...items].sort((a, b) => +excluded.has(a.id) - +excluded.has(b.id)).map(p => {   // ignorierte ans Ende
       const pr = profiles.get(p.id)
-      return <li key={p.id}><CoverRow image={p.image} title={p.name} onClick={() => onOpen(p.id)}
+      return <li key={p.id}><CoverRow image={p.image} title={p.name} onClick={() => onOpen(p.id)} accent={excluded.has(p.id)}
         sub={`${p.total} Songs · ${p.ownedByMe ? 'eigene' : p.owner}${excluded.has(p.id) ? ' · ignoriert' : ''}${p.tracksBlocked ? ' · Tracks gesperrt' : p.tracksSnapshot ? '' : ' · wird noch eingelesen'}`}
         extra={pr && <small className="prof">{[pr.genres.slice(0, 2).join(', '), pr.era, pr.mood].filter(Boolean).join(' · ')}</small>} /></li>
     })}
