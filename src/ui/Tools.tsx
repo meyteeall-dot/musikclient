@@ -25,7 +25,7 @@ export function Tools({ onError, onAdded }: { onError: (m: string) => void; onAd
 
 const pct = (a: number, n: number) => `${Math.round(a / n * 100)} %`
 
-type Totals = { n: number; top1: number; top3: number; l1: number; l3: number; misses: Miss[]; ablation: Ablation }
+type Totals = { n: number; top1: number; top3: number; l1: number; l3: number; misses: Miss[]; ablation: Ablation; points: boolean }
 
 function AccuracyPanel({ onError }: { onError: (m: string) => void }) {
   const [res, setRes] = useState<Accuracy | null>(null)
@@ -58,7 +58,7 @@ function AccuracyPanel({ onError }: { onError: (m: string) => void }) {
     const lock = await (navigator as any).wakeLock?.request('screen').catch(() => null)   // Bildschirm anlassen, solange es läuft
     try {
       if (!endless) { setRes(await round(n, new Set(), 1)); return }
-      const skip = new Set<string>(), t: Totals = { n: 0, top1: 0, top3: 0, l1: 0, l3: 0, misses: [], ablation: {} }
+      const skip = new Set<string>(), t: Totals = { n: 0, top1: 0, top3: 0, l1: 0, l3: 0, misses: [], ablation: {}, points: localOnly }
       setTot({ ...t })
       for (let r = 1; !stop.current; r++) {
         let x: Accuracy
@@ -85,10 +85,11 @@ function AccuracyPanel({ onError }: { onError: (m: string) => void }) {
     } catch (e) { setErr((e as Error).message); onError((e as Error).message) }
     finally { lock?.release?.(); setProg(null); setWait(0); getLessons().then(l => setLearned(l.length)) }
   }
-  const forget = async (id?: string) => { if (!id) return; await forgetLesson(id); setForgot(f => new Set(f).add(id)); setLearned(l => l - 1) }
+  const forget = async (id?: string) => { if (!id) return; await forgetLesson(id); setForgot(f => new Set(f).add(id)); setLearned((await getLessons()).length) }
 
   const busy = !!prog || !!wait
   const show = endless && tot ? { n: tot.n, top1: tot.top1, top3: tot.top3, local: { top1: tot.l1, top3: tot.l3 }, misses: tot.misses, ablation: tot.ablation } : res
+  const points = endless && tot ? tot.points : res?.provider === 'nur Punkte'   // „Nur Punkte“: nichts gelernt, kein KI-Vergleich
   const secs = prog ? Math.floor((Date.now() - prog.t0) / 1000) : 0
   return <section className="panel glass">
     <h2>Trefferquote</h2>
@@ -97,13 +98,13 @@ function AccuracyPanel({ onError }: { onError: (m: string) => void }) {
       <div><b>{pct(show.top1, show.n)}</b><small>auf Platz 1</small></div>
       <div><b>{pct(show.top3, show.n)}</b><small>unter den Top 3</small></div>
     </div>}
-    {show?.local && show.n > 0 && <p className="cap left">Ohne KI wären es {pct(show.local.top1, show.n)} auf Platz 1 und {pct(show.local.top3, show.n)} in den Top 3.</p>}
+    {show?.local && show.n > 0 && !points && <p className="cap left">Ohne KI wären es {pct(show.local.top1, show.n)} auf Platz 1 und {pct(show.local.top3, show.n)} in den Top 3.</p>}
     {show?.local && show.ablation && show.n > 0 && <SignalTable n={show.n} local={show.local} ablation={show.ablation} />}
     {show && <p className="cap left">{endless && tot ? `Endlos: ${tot.n} Songs geprüft` : `${show.n} Songs`}{res && !endless ? ` · ${res.provider} · ${new Date(res.at).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' })}` : ''} · {learned} Merksätze gelernt</p>}
-    {!!show?.misses.length && <details className="misses"><summary>Daneben ({show.misses.length}) – daraus gelernt</summary>
+    {!!show?.misses.length && <details className="misses"><summary>Daneben ({show.misses.length}){points ? '' : ' – daraus gelernt'}</summary>
       <ul>{show.misses.map((m, i) => <li key={i}><b>{m.song}</b><small>gehört in: {m.expected.join(', ')}</small>
         <small>vorgeschlagen: {m.got.join(', ')}{m.top3 ? ' (richtig war unter den Top 3)' : ''}</small>
-        {m.trackId && <button className="pill glass mini" disabled={forgot.has(m.trackId)} onClick={() => forget(m.trackId)}>
+        {m.trackId && !points && <button className="pill glass mini" disabled={forgot.has(m.trackId)} onClick={() => forget(m.trackId)}>
           {forgot.has(m.trackId) ? 'Vergessen ✓' : 'Kein echter Fehler – nicht lernen'}</button>}</li>)}</ul>
     </details>}
     {prog && <ul className="steps">
