@@ -7,7 +7,8 @@ interface Provider { name: string; available(): Promise<boolean>; complete(r: Ai
 
 export const AI_DEFAULTS = { geminiModel: 'gemini-3.8-flash', groqModel: 'openai/gpt-oss-120b' }
 
-class AiError extends Error { constructor(public status: number, msg: string) { super(msg) } }
+/** until: Anbieter ist bis dahin gesperrt (langes Limit) – nicht vorher erneut fragen. */
+class AiError extends Error { constructor(public status: number, msg: string, public until = 0) { super(msg) } }
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 
 /** Was die KI gerade tut, für Live-Anzeigen (z. B. Trefferquote): „Gemini antwortet …“, „Limit, warte 8 s“. */
@@ -39,10 +40,11 @@ async function post(label: string, url: string, headers: Record<string, string>,
     const j = await r.json().catch(() => ({}))
     if (r.ok) return j
     const msg = `${r.status} ${j.error?.message ?? ''}`.trim()
-    if (r.status !== 429 || attempt >= 3) throw new AiError(r.status, msg)
+    // 429 trotz Warten: vermutlich Tageskontingent ohne Zeitangabe – 30 Min. Ruhe für diesen Anbieter
+    if (r.status !== 429 || attempt >= 3) throw new AiError(r.status, msg, r.status === 429 ? Date.now() + 30 * 60_000 : 0)
     const said = waitOf(r, j, msg)
     // Langes Limit (Minuten bis Stunden = Tageskontingent): nicht warten, der nächste Anbieter soll übernehmen
-    if (said > 30_000) throw new AiError(429, `Limit erreicht, wieder frei in ca. ${Math.ceil(said / 60_000)} Min.`)
+    if (said > 30_000) throw new AiError(429, `Limit erreicht, wieder frei in ca. ${Math.ceil(said / 60_000)} Min.`, Date.now() + said)
     const wait = Math.max(said, [3000, 8000, 20000][attempt])
     status(`${label}: Limit, warte ${Math.round(wait / 1000)} s`)
     await sleep(wait)
@@ -112,12 +114,27 @@ export async function hasAi() {
 }
 
 /** parse: prüft die Antwort; ist sie unbrauchbar, kommt der nächste Anbieter dran. */
+// Gesperrte Anbieter (langes Limit) werden bis zum Ablauf übersprungen statt bei jeder Anfrage erneut probiert
+const health = new Map<string, { until: number; error: string }>()
+/** Zustand der Anbieter für Anzeigen: gesperrt bis (0 = frei) und letzter Fehler. */
+export const aiHealth = () => PROVIDERS.map(p => { const h = health.get(p.name); return { name: p.name, until: h && h.until > Date.now() ? h.until : 0, error: h?.error ?? '' } })
+
 export async function complete<T = string>(r: AiRequest, parse: (text: string) => T = t => t as T) {
   const errors: string[] = []
   for (const p of PROVIDERS) {
     if (!(await p.available())) continue
-    try { return { data: parse(await p.complete(r)), provider: p.name } }
-    catch (e) { errors.push(`${p.name}: ${(e as Error).message}`); status(`${p.name} fehlgeschlagen (${(e as Error).message.slice(0, 60)}) – nächster Anbieter`) }
+    const h = health.get(p.name)
+    if (h && h.until > Date.now()) { errors.push(`${p.name}: ${h.error}`); continue }
+    try {
+      const data = parse(await p.complete(r))
+      health.delete(p.name)
+      return { data, provider: p.name }
+    } catch (e) {
+      const m = (e as Error).message
+      errors.push(`${p.name}: ${m}`)
+      health.set(p.name, { until: e instanceof AiError ? e.until : 0, error: m })
+      status(`${p.name} fehlgeschlagen (${m.slice(0, 60)}) – nächster Anbieter`)
+    }
   }
   throw new Error(errors.length ? 'KI nicht erreichbar – ' + errors.join(' | ') : 'Kein KI-Schlüssel eingetragen')
 }

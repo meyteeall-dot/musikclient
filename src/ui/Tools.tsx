@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { lastAccuracy, measureAccuracy, type Ablation, type Accuracy, type Miss, type Step } from '../features/accuracy'
 import { SIGNALS, type Signal } from '../features/suggest'
+import { aiHealth } from '../ai'
 import { forgetLesson, getLessons } from '../features/lessons'
 import { doneInbox, loadInbox } from '../features/inbox'
 import { buildMix, createMix, type Mix } from '../features/mix'
@@ -30,6 +31,7 @@ function AccuracyPanel({ onError }: { onError: (m: string) => void }) {
   const [res, setRes] = useState<Accuracy | null>(null)
   const [n, setN] = useState(10)
   const [endless, setEndless] = useState(false)
+  const [localOnly, setLocalOnly] = useState(false)   // „nur Punkte“: ohne KI, kostenlos, ohne Limits
   const [tot, setTot] = useState<Totals | null>(null)   // Endlos-Modus: Summe über alle Runden
   const [prog, setProg] = useState<{ done: number; total: number; steps: Step[]; t0: number; round: number } | null>(null)
   const [wait, setWait] = useState(0)   // Endlos: Pause wegen KI-Limit bis (ms-Zeitstempel)
@@ -49,7 +51,7 @@ function AccuracyPanel({ onError }: { onError: (m: string) => void }) {
   const round = async (size: number, skip: Set<string>, r: number) => {
     const t0 = Date.now()
     setProg({ done: 0, total: size, steps: [], t0, round: r })
-    return measureAccuracy(size, (done, total, step) => setProg(p => p && ({ ...p, done, total, steps: step ? [...p.steps, step].slice(-12) : p.steps })), { skip, stop: () => stop.current })
+    return measureAccuracy(size, (done, total, step) => setProg(p => p && ({ ...p, done, total, steps: step ? [...p.steps, step].slice(-12) : p.steps })), { skip, stop: () => stop.current, localOnly })
   }
   const run = async () => {
     setErr(''); stop.current = false
@@ -60,9 +62,10 @@ function AccuracyPanel({ onError }: { onError: (m: string) => void }) {
       setTot({ ...t })
       for (let r = 1; !stop.current; r++) {
         let x: Accuracy
-        try { x = await round(10, skip, r) }
+        try { x = await round(localOnly ? 50 : 10, skip, r) }
         catch (e) {
           const m = (e as Error).message
+          if (m.startsWith('Alle Songs') && localOnly) break   // nur Punkte: jeder Song einmal reicht, mehr Runden ändern nichts
           if (m.startsWith('Alle Songs') && skip.size) { skip.clear(); continue }   // einmal durch: von vorn (gelernte bleiben draußen)
           if (!m.startsWith('Kein Song')) throw e
           // KI am Limit: 5 Minuten warten, dann weiter (Stopp beendet sofort)
@@ -110,8 +113,14 @@ function AccuracyPanel({ onError }: { onError: (m: string) => void }) {
         {ai && <small>{ai.text} … {Math.floor((Date.now() - ai.at) / 1000)} s</small>}</li>}
     </ul>}
     {wait > 0 && <p className="cap left">KI am Limit – nächster Versuch in {Math.ceil((wait - Date.now()) / 60_000)} Min.</p>}
+    {!localOnly && <p className="cap left">KI: {aiHealth().map(h => `${h.name} ${h.until ? `gesperrt bis ${new Date(h.until).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}` : h.error ? 'zuletzt Fehler' : 'bereit'}`).join(' · ')}</p>}
     {busy && <p className="cap left">Pro Song etwa 10–30 Sekunden. Seite offen lassen – im Hintergrund pausiert der Browser.</p>}
     {err && !busy && <p className="cap left err">Messung abgebrochen: {err}</p>}
+    <div className="actions">
+      <button className={'pill glass' + (!localOnly ? ' hot' : '')} disabled={busy} onClick={() => setLocalOnly(false)}>Mit KI</button>
+      <button className={'pill glass' + (localOnly ? ' hot' : '')} disabled={busy} onClick={() => setLocalOnly(true)}>Nur Punkte</button>
+    </div>
+    {localOnly && <p className="cap left">Nur Punkte: ohne KI, kostenlos, ohne Limits – prüft in Sekunden viele Songs. Ideal für „Was zählt wie viel“. Endlos geht einmal durch die ganze Sammlung.</p>}
     <div className="actions">
       {[10, 20].map(x => <button key={x} className={'pill glass' + (!endless && n === x ? ' hot' : '')} disabled={busy} onClick={() => { setN(x); setEndless(false) }}>{x} Songs</button>)}
       <button className={'pill glass' + (endless ? ' hot' : '')} disabled={busy} onClick={() => setEndless(true)}>∞ Endlos</button>

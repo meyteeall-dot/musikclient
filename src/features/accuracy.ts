@@ -20,7 +20,7 @@ export const lastAccuracy = () => kv.get<Accuracy>('accuracy')
 
 /** skip: schon geprüfte Songs (Endlos-Modus). stop: true = nach dem aktuellen Song aufhören. */
 export async function measureAccuracy(n: number, onStep?: (done: number, total: number, step?: Step) => void,
-  opts: { skip?: Set<string>; stop?: () => boolean } = {}): Promise<Accuracy> {
+  opts: { skip?: Set<string>; stop?: () => boolean; localOnly?: boolean } = {}): Promise<Accuracy> {
   const lib = await loadLibrary()   // einmal für die ganze Messung, nicht zweimal pro Song
   const { all, excluded } = lib
   const learned = new Set(lib.lessons.map(l => l.trackId))   // gelernte Songs nicht prüfen: das Ergebnis bliebe sonst geschönt
@@ -46,7 +46,7 @@ export async function measureAccuracy(n: number, onStep?: (done: number, total: 
   }
   if (!pool.length) throw new Error(where.size ? 'Alle Songs sind schon geprüft oder gelernt.' : 'Noch keine eingelesenen Songs zum Prüfen – erst abgleichen.')
 
-  let top1 = 0, top3 = 0, provider = 'lokal', done = 0, lastErr = ''
+  let top1 = 0, top3 = 0, provider = opts.localOnly ? 'nur Punkte' : 'lokal', done = 0, lastErr = ''
   const tested: string[] = [], ai = await hasAi()
   const local = { top1: 0, top3: 0 }   // dieselben Songs nur mit lokalen Punkten: kostet nichts, zeigt den Wert der KI
   const ablation: Ablation = {}
@@ -55,14 +55,18 @@ export async function measureAccuracy(n: number, onStep?: (done: number, total: 
   for (const [i, { t, in: inn }] of pool.entries()) {
     if (opts.stop?.()) break
     const song = `${t.artists[0]} – ${t.name}`
-    if (i && provider.startsWith('Gemini')) await new Promise(r => setTimeout(r, 3000))   // KI-Minutenlimit schonen
+    if (i && !opts.localOnly && provider.startsWith('Gemini')) await new Promise(r => setTimeout(r, 3000))   // KI-Minutenlimit schonen
     try {
-      // Wächter: ein Song darf höchstens 3 Minuten brauchen, dann zählt er als Fehler und es geht weiter
-      const res = await Promise.race([suggest(t, { test: true, lib }),
-        new Promise<never>((_, no) => setTimeout(() => no(new Error('keine Antwort nach 3 Minuten')), 180_000))])
-      // KI ausgefallen und nur Punkte geliefert: nicht als KI-Ergebnis werten
-      if (ai && res.provider.startsWith('lokal')) throw new Error('KI nicht erreichbar')
-      provider = res.provider
+      let ids: string[] = []
+      if (!opts.localOnly) {
+        // Wächter: ein Song darf höchstens 3 Minuten brauchen, dann zählt er als Fehler und es geht weiter
+        const res = await Promise.race([suggest(t, { test: true, lib }),
+          new Promise<never>((_, no) => setTimeout(() => no(new Error('keine Antwort nach 3 Minuten')), 180_000))])
+        // KI ausgefallen und nur Punkte geliefert: nicht als KI-Ergebnis werten
+        if (ai && res.provider.startsWith('lokal')) throw new Error('KI nicht erreichbar')
+        provider = res.provider
+        ids = res.suggestions.map(s => s.playlist.id)
+      }
       const lres = await suggest(t, { test: true, local: true, lib })
       const lids = rankWithout(lres.ranking ?? []).slice(0, 3)   // gleiche Gleichstand-Regel wie die Analyse: fairer Vergleich
       if (inn.has(lids[0])) local.top1++
@@ -72,12 +76,13 @@ export async function measureAccuracy(n: number, onStep?: (done: number, total: 
         if (inn.has(r[0])) a.top1++
         if (r.some(id => inn.has(id))) a.top3++
       }
-      const ids = res.suggestions.map(s => s.playlist.id), ok1 = inn.has(ids[0]), ok3 = ids.some(id => inn.has(id))
+      if (opts.localOnly) ids = lids
+      const ok1 = inn.has(ids[0]), ok3 = ids.some(id => inn.has(id))
       if (ok1) top1++
       if (ok3) top3++
-      if (!ok1) {   // Platz 1 daneben: merken und lernen
+      if (!ok1) {   // Platz 1 daneben: merken und lernen (nur aus echten KI-Fehlgriffen)
         misses.push({ song, trackId: t.id, top3: ok3, expected: [...inn].map(id => name.get(id) ?? '?'), got: ids.map(id => name.get(id) ?? '?') })
-        await addLesson({ trackId: t.id, song, artistIds: t.artistIds, right: [...inn], wrong: ids[0], at: Date.now() })
+        if (!opts.localOnly) await addLesson({ trackId: t.id, song, artistIds: t.artistIds, right: [...inn], wrong: ids[0], at: Date.now() })
       }
       done++; tested.push(t.id)
       onStep?.(i + 1, pool.length, { song, top1: ok1, top3: ok3 })
