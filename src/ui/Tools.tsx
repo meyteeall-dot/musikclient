@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { lastAccuracy, measureAccuracy, type Ablation, type Accuracy, type Miss, type Step } from '../features/accuracy'
 import { SIGNALS, type Signal, type Weights } from '../features/suggest'
-import { getSoundParams, getWeights, optimizeAll, resetTuning, saveTuning, type Optimized } from '../features/weights'
+import { getBias, getSoundParams, getWeights, optimizeAll, resetTuning, saveTuning, type Optimized } from '../features/weights'
 import { DEFAULT_SOUND, KEYS, type SoundParams } from '../features/sound'
 import { aiHealth } from '../ai'
 import { forgetLesson, getLessons } from '../features/lessons'
@@ -218,21 +218,21 @@ const FEAT_NAMES: Record<string, string> = { tempo: 'Tempo', energy: 'Energie', 
 
 /** Feinabstimmung aus der eigenen Sammlung: Klangvergleich + Gewichte, Hälfte A lernt, Hälfte B prüft; dazu Verwechslungen. */
 function WeightsPanel({ onError }: { onError: (m: string) => void }) {
-  const [cur, setCur] = useState<{ w: Weights; s: SoundParams }>({ w: {}, s: DEFAULT_SOUND })
+  const [cur, setCur] = useState<{ w: Weights; s: SoundParams; b: Record<string, number> }>({ w: {}, s: DEFAULT_SOUND, b: {} })
   const [res, setRes] = useState<Optimized | null>(null)
   const [busy, setBusy] = useState('')
   const [saved, setSaved] = useState(false)
-  useEffect(() => { Promise.all([getWeights(), getSoundParams()]).then(([w, s]) => setCur({ w, s })) }, [])
+  useEffect(() => { Promise.all([getWeights(), getSoundParams(), getBias()]).then(([w, s, b]) => setCur({ w, s, b })) }, [])
   const run = async () => {
     setBusy('starte …'); setRes(null); setSaved(false)
     try { setRes(await optimizeAll(setBusy)) } catch (e) { onError((e as Error).message) }
     setBusy('')
   }
-  const apply = async () => { await saveTuning(res!.weights, res!.sound); setCur({ w: res!.weights, s: res!.sound }); setSaved(true) }
-  const reset = async () => { await resetTuning(); setCur({ w: {}, s: DEFAULT_SOUND }); setRes(null); setSaved(false) }
+  const apply = async () => { await saveTuning(res!.weights, res!.sound, res!.bias); setCur({ w: res!.weights, s: res!.sound, b: res!.bias }); setSaved(true) }
+  const reset = async () => { await resetTuning(); setCur({ w: {}, s: DEFAULT_SOUND, b: {} }); setRes(null); setSaved(false) }
   const p = (v: number) => `${Math.round(v * 100)} %`
   const gain = res ? res.after.test - res.before.test : 0
-  const tuned = Object.keys(cur.w).length > 0 || cur.s.k !== DEFAULT_SOUND.k || Object.keys(cur.s.w).length > 0 || !!cur.s.size
+  const tuned = Object.keys(cur.w).length > 0 || cur.s.k !== DEFAULT_SOUND.k || Object.keys(cur.s.w).length > 0 || !!cur.s.size || Object.keys(cur.b).length > 0
   return <section className="panel glass">
     <h2>Feinabstimmung</h2>
     <p className="cap left">Die App stellt erst den Klangvergleich fein ein (wie viele ähnliche Songs abstimmen, wie stark Energie, Sprechgesang, Tempo … zählen), dann die Gewichte der Fakten – gelernt an der einen Hälfte deiner Songs, geprüft an der anderen. Dazu: welche Playlists am häufigsten verwechselt werden. Ohne KI, kostenlos, ein paar Minuten.</p>
@@ -247,12 +247,16 @@ function WeightsPanel({ onError }: { onError: (m: string) => void }) {
     {(res || tuned) && <details className="misses"><summary>Einstellungen im Detail</summary>
       <table className="signals"><thead><tr><th>Fakt</th><th>aktuell</th>{res && <th>neu</th>}</tr></thead>
         <tbody>
-          {(Object.keys(SIGNALS) as Signal[]).map(s => <tr key={s}><td>{SIGNALS[s]}</td><td>×{cur.w[s] ?? 1}</td>{res && <td>×{res.weights[s] ?? 1}</td>}</tr>)}
+          {(Object.keys(SIGNALS) as Signal[]).filter(s => s !== 'bias').map(s => <tr key={s}><td>{SIGNALS[s]}</td><td>×{cur.w[s] ?? 1}</td>{res && <td>×{res.weights[s] ?? 1}</td>}</tr>)}
           <tr><td>Klang: ähnliche Songs</td><td>{cur.s.k}</td>{res && <td>{res.sound.k}</td>}</tr>
           <tr><td>Klang: Größen-Ausgleich</td><td>{Math.round((cur.s.size ?? 0) * 100)} %</td>{res && <td>{Math.round((res.sound.size ?? 0) * 100)} %</td>}</tr>
           {KEYS.map(k => <tr key={k}><td>Klang: {FEAT_NAMES[k]}</td><td>×{cur.s.w[k] ?? 1}</td>{res && <td>×{res.sound.w[k] ?? 1}</td>}</tr>)}
         </tbody>
       </table>
+    </details>}
+    {!!res?.biasNamed.length && <details className="misses"><summary>Magnet-Bremse ({res.biasNamed.length} Playlists)</summary>
+      <p className="cap left">Minus: diese Playlist gewann zu oft und wird gebremst. Plus: gewann zu selten und bekommt Rückenwind.</p>
+      <ul>{res.biasNamed.map((x, i) => <li key={i}><b>{x.name}</b><small>{x.v > 0 ? '+' : ''}{x.v}</small></li>)}</ul>
     </details>}
     {!!res?.confusion.length && <details className="misses"><summary>Häufigste Verwechslungen</summary>
       <p className="cap left">„gehört in → vorgeschlagen“. Viele davon passen vielleicht ehrlich in beide – genau dort hilft später die KI.</p>

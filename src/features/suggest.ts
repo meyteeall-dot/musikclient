@@ -8,7 +8,7 @@ import { DEFAULT_SOUND, soundOf, soundVotes, type SoundParams } from './sound'
 
 export interface Suggestion { playlist: Playlist; reason: string }
 /** Bausteine der Punkte – einzeln abschaltbar für die Signal-Analyse der Trefferquote. */
-export const SIGNALS = { artist: 'Künstler schon drin', sound: 'Klang', chosen: 'Deine Hinzufügungen', rejected: '✕ Ablehnungen', lessons: 'Merksätze', era: 'Epoche', general: 'Oft gewählte Playlists' } as const
+export const SIGNALS = { artist: 'Künstler schon drin', sound: 'Klang', chosen: 'Deine Hinzufügungen', rejected: '✕ Ablehnungen', lessons: 'Merksätze', era: 'Epoche', general: 'Oft gewählte Playlists', bias: 'Magnet-Bremse' } as const
 export type Signal = keyof typeof SIGNALS
 export type Parts = Record<Signal, number>
 
@@ -40,7 +40,7 @@ export function score(song: Track, tracks: Track[], prof: Profile | undefined, c
   const lr = same.filter(l => l.right.includes(playlistId)).length, lw = same.filter(l => l.wrong === playlistId).length
   const parts: Parts = {
     artist: Math.min(k, 5) * 2, chosen: w * 3, rejected: -no * 4, lessons: Math.min(lr, 3) * 2 - Math.min(lw, 3) * 2,
-    era: era ? 2 : 0, general: Math.min(mine.length, 6) * .25, sound: 0,   // Klang kommt in compute() dazu
+    era: era ? 2 : 0, general: Math.min(mine.length, 6) * .25, sound: 0, bias: 0,   // Klang und Magnet-Bremse kommen in compute() dazu
   }
   return { k, w, era, parts, score: sum(parts) }
 }
@@ -95,7 +95,7 @@ export type Library = Awaited<ReturnType<typeof loadLibrary>>
 export async function loadLibrary() {
   status('lese Songs aus dem Speicher')
   const d = await db
-  const [all, profiles, choices, excluded, allTracks, lessons, weights, soundParams, noLearn] = await Promise.all([d.getAll('playlists'), d.getAll('profiles'), d.getAll('choices'), getExcluded(), d.getAll('tracks'), getLessons(), kv.get<Weights>('weights'), kv.get<SoundParams>('soundParams'), getNoLearn()])
+  const [all, profiles, choices, excluded, allTracks, lessons, weights, soundParams, noLearn, bias] = await Promise.all([d.getAll('playlists'), d.getAll('profiles'), d.getAll('choices'), getExcluded(), d.getAll('tracks'), getLessons(), kv.get<Weights>('weights'), kv.get<SoundParams>('soundParams'), getNoLearn(), kv.get<Record<string, number>>('bias')])
   const tracks = allTracks.map(t => noLearn.has(t.id) ? { id: t.id, tracks: [] } : t)   // „Lernen“ aus: Songs zählen nirgends als Vorbild
   const sound = new Map((await d.getAll('sound')).map(s => [s.id, s]))
   const inPl = new Map<string, string[]>()   // Song → Playlists, in denen er liegt (für den Klangvergleich)
@@ -103,7 +103,7 @@ export async function loadLibrary() {
   const plSize = new Map<string, number>()   // Songs mit Klangdaten je Playlist (für den Größen-Ausgleich)
   for (const t of tracks) plSize.set(t.id, t.tracks.filter(x => { const s = sound.get(x.id); return s && s.src !== 'fehlt' }).length)
   const has = new Map(allTracks.map(t => [t.id, new Set(t.tracks.map(x => x.id))]))   // „schon drin“ immer mit allen Songs
-  return { all, profiles, choices, excluded, noLearn, has, lessons, sound, inPl, plSize, weights: weights ?? {}, soundParams: soundParams ?? DEFAULT_SOUND, tracks: new Map(tracks.map(t => [t.id, t.tracks])) }
+  return { all, profiles, choices, excluded, noLearn, has, lessons, sound, inPl, plSize, weights: weights ?? {}, soundParams: soundParams ?? DEFAULT_SOUND, bias: bias ?? {}, tracks: new Map(tracks.map(t => [t.id, t.tracks])) }
 }
 
 async function compute(song: Track, opts: { test?: boolean; local?: boolean; lib?: Library }): Promise<SuggestResult> {
@@ -127,7 +127,7 @@ async function compute(song: Track, opts: { test?: boolean; local?: boolean; lib
       tracks = tracks.filter(t => t.id !== song.id)
     }
     const s = score(song, tracks, profOf.get(p.id), choices, p.id, lessons), kl = votes.get(p.id) ?? 0
-    const parts = { ...s.parts, sound: kl * 8 }   // Klang: bis zu 8 Punkte
+    const parts = { ...s.parts, sound: kl * 8, bias: lib.bias[p.id] ?? 0 }   // Klang: bis zu 8 Punkte; Magnet-Bremse: gelernter Ausgleich je Playlist
     cands.push({ p, prof: profOf.get(p.id), tracks, ...s, kl, parts, score: sum(parts, undefined, lib.weights) })
   }
   cands.sort((a, b) => b.score - a.score)

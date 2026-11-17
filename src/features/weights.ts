@@ -14,6 +14,8 @@ export interface Confusion { from: string; to: string; n: number }
 export interface Optimized {
   before: { train: number; test: number }; after: { train: number; test: number }
   weights: Weights; sound: SoundParams; n: number; confusion: Confusion[]
+  /** Magnet-Bremse: gelernter Ausgleich je Playlist (− = gewann zu oft, + = zu selten) */
+  bias: Record<string, number>; biasNamed: { name: string; v: number }[]
 }
 
 const GRID = [0, .25, .5, .75, 1, 1.5, 2, 3, 4, 6]   // Gewichte je Baustein
@@ -24,22 +26,24 @@ const POOL = 150                                     // shortcut: Nachbarn auße
 
 export const getWeights = async () => (await kv.get<Weights>('weights')) ?? {}
 export const getSoundParams = async () => (await kv.get<SoundParams>('soundParams')) ?? DEFAULT_SOUND
-export async function saveTuning(w: Weights, s: SoundParams) { await kv.set('weights', w); await kv.set('soundParams', s) }
-export async function resetTuning() { await kv.del('weights'); await kv.del('soundParams') }
+export async function saveTuning(w: Weights, s: SoundParams, b: Record<string, number>) { await kv.set('weights', w); await kv.set('soundParams', s); await kv.set('bias', b) }
+export async function resetTuning() { await kv.del('weights'); await kv.del('soundParams'); await kv.del('bias') }
+export const getBias = async () => (await kv.get<Record<string, number>>('bias')) ?? {}
 
 const tick = () => new Promise(r => setTimeout(r))   // Anzeige zwischendurch atmen lassen
 
 /** Platz 1 bei diesen Gewichten (Gleichstand neutral nach ID, wie in der Trefferquote). */
-function top(c: Case, w: Weights) {
+/** b: andere Magnet-Bremse ausprobieren (statt der gespeicherten im Baustein „bias“). */
+function top(c: Case, w: Weights, b?: Record<string, number>) {
   let best = '', bs = -Infinity
   for (const r of c.ranking) {
-    let s = 0
-    for (const k in r.parts) s += r.parts[k as Signal] * (w[k as Signal] ?? 1)
+    let s = b ? b[r.id] ?? 0 : r.parts.bias
+    for (const k in r.parts) if (k !== 'bias') s += r.parts[k as Signal] * (w[k as Signal] ?? 1)
     if (s > bs || (s === bs && r.id < best)) { bs = s; best = r.id }
   }
   return best
 }
-export const hits = (cases: Case[], w: Weights) => cases.length ? cases.filter(c => c.inn.has(top(c, w))).length / cases.length : 0
+export const hits = (cases: Case[], w: Weights, b?: Record<string, number>) => cases.length ? cases.filter(c => c.inn.has(top(c, w, b))).length / cases.length : 0
 
 /** Klang-Bausteine mit anderen Klang-Einstellungen neu berechnen. */
 let SIZES: Map<string, number> | undefined   // Playlist-Größen der aktuellen Abstimmung
@@ -92,11 +96,12 @@ export async function optimizeAll(onProgress?: (text: string) => void): Promise<
   // 2) Gewichte auf Basis des neuen Klangs
   const trainS = withSound(train, sp), testS = withSound(test, sp)
   const { w } = await search(trainS, startW, onProgress)
+  const b = await biasSearch(trainS, w, lib.bias, onProgress)
 
   // 3) Verwechslungen über alle Songs mit den neuen Einstellungen
   const conf = new Map<string, number>()
   for (const c of withSound(cases, sp)) {
-    const t = top(c, w)
+    const t = top(c, w, b)
     if (!t || c.inn.has(t)) continue
     const key = `${name.get([...c.inn][0]) ?? '?'}\u0000${name.get(t) ?? '?'}`
     conf.set(key, (conf.get(key) ?? 0) + 1)
@@ -106,14 +111,15 @@ export async function optimizeAll(onProgress?: (text: string) => void): Promise<
   return {
     n: cases.length, weights: w, sound: sp, confusion,
     before: { train: hits(withSound(train, startS), startW), test: hits(withSound(test, startS), startW) },
-    after: { train: hits(trainS, w), test: hits(testS, w) },
+    after: { train: hits(trainS, w, b), test: hits(testS, w, b) }, bias: b,
+    biasNamed: Object.entries(b).filter(([, v]) => v).sort((x, y) => Math.abs(y[1]) - Math.abs(x[1])).map(([id, v]) => ({ name: name.get(id) ?? '?', v })),
   }
 }
 
 /** Koordinatensuche: je Baustein das beste Gewicht aus GRID, die anderen fest; bis zu 3 Durchgänge. */
 export async function search(train: Case[], start: Weights, onProgress?: (text: string) => void) {
   const w: Weights = { ...start }
-  const used = (Object.keys(SIGNALS) as Signal[]).filter(s => train.some(c => c.ranking.some(r => r.parts[s] !== 0)))   // Bausteine ohne Daten bleiben
+  const used = (Object.keys(SIGNALS) as Signal[]).filter(s => s !== 'bias' && train.some(c => c.ranking.some(r => r.parts[s] !== 0)))   // Bausteine ohne Daten bleiben; Magnet-Bremse lernt eigens
   let best = hits(train, w)
   for (let pass = 0; pass < 3; pass++) {
     let improved = false
@@ -128,4 +134,38 @@ export async function search(train: Case[], start: Weights, onProgress?: (text: 
     if (!improved) break
   }
   return { w, best }
+}
+
+const B_GRID = [-1.5, -1, -.5, -.25, 0, .25, .5, 1]   // fein: grobe Sprünge passen sich zu sehr an die Lern-Hälfte an
+
+/** Magnet-Bremse: je Playlist der Ausgleich, der auf der Lern-Hälfte am meisten Treffer bringt; zwei Durchgänge. */
+export async function biasSearch(train: Case[], w: Weights, start: Record<string, number>, onProgress?: (text: string) => void) {
+  // Punkte ohne Ausgleich einmal vorrechnen – danach kostet jeder Versuch nur noch Additionen
+  const base = train.map(c => c.ranking.map(r => {
+    let s = 0
+    for (const k in r.parts) if (k !== 'bias') s += r.parts[k as Signal] * (w[k as Signal] ?? 1)
+    return { id: r.id, s }
+  }))
+  const count = (b: Record<string, number>) => {
+    let ok = 0
+    for (let i = 0; i < train.length; i++) {
+      let best = '', bs = -Infinity
+      for (const r of base[i]) { const s = r.s + (b[r.id] ?? 0); if (s > bs || (s === bs && r.id < best)) { bs = s; best = r.id } }
+      if (train[i].inn.has(best)) ok++
+    }
+    return ok
+  }
+  const ids = [...new Set(train.flatMap(c => c.ranking.map(r => r.id)))]
+  const b: Record<string, number> = { ...start }
+  let best = count(b)
+  const minGain = Math.max(2, Math.round(train.length * .002))   // nur ändern, wenn es spürbar mehr Treffer bringt (gegen Zufallstreffer)
+  for (let pass = 0; pass < 2; pass++) {
+    onProgress?.(`Magnet-Bremse (Durchgang ${pass + 1}/2)`); await tick()
+    for (const id of ids) for (const g of B_GRID) {
+      const v = count({ ...b, [id]: g })
+      if (v >= best + minGain) { best = v; b[id] = g }
+    }
+  }
+  for (const id in b) if (!b[id]) delete b[id]
+  return b
 }
