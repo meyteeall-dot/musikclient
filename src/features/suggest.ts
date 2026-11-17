@@ -91,7 +91,9 @@ export async function loadLibrary() {
   const sound = new Map((await d.getAll('sound')).map(s => [s.id, s]))
   const inPl = new Map<string, string[]>()   // Song → Playlists, in denen er liegt (für den Klangvergleich)
   for (const t of tracks) for (const x of t.tracks) inPl.set(x.id, [...(inPl.get(x.id) ?? []), t.id])
-  return { all, profiles, choices, excluded, lessons, sound, inPl, weights: weights ?? {}, soundParams: soundParams ?? DEFAULT_SOUND, tracks: new Map(tracks.map(t => [t.id, t.tracks])) }
+  const plSize = new Map<string, number>()   // Songs mit Klangdaten je Playlist (für den Größen-Ausgleich)
+  for (const t of tracks) plSize.set(t.id, t.tracks.filter(x => { const s = sound.get(x.id); return s && s.src !== 'fehlt' }).length)
+  return { all, profiles, choices, excluded, lessons, sound, inPl, plSize, weights: weights ?? {}, soundParams: soundParams ?? DEFAULT_SOUND, tracks: new Map(tracks.map(t => [t.id, t.tracks])) }
 }
 
 async function compute(song: Track, opts: { test?: boolean; local?: boolean; lib?: Library }): Promise<SuggestResult> {
@@ -101,7 +103,7 @@ async function compute(song: Track, opts: { test?: boolean; local?: boolean; lib
   const nameOf = new Map(all.map(p => [p.id, p.name]))
   // Klang: die ähnlichst klingenden Songs der Sammlung stimmen für ihre Playlists (der Song selbst zählt nie mit)
   const f = await soundOf(song, lib.sound)
-  const votes = f ? soundVotes(f, lib.sound, lib.inPl, song.id, lib.soundParams) : new Map<string, number>()
+  const votes = f ? soundVotes(f, lib.sound, lib.inPl, song.id, lib.soundParams, lib.plSize) : new Map<string, number>()
   status('berechne Punkte')
   const choices = opts.test ? allChoices.filter(c => c.trackId !== song.id) : allChoices
   const never = new Set(choices.filter(c => c.rejected && c.trackId === song.id).map(c => c.playlistId))

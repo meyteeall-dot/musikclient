@@ -12,7 +12,8 @@ export type Feat = Omit<Sound, 'id' | 'src' | 'at' | 'alt' | 'tried'>
 export const KEYS = ['tempo', 'energy', 'danceability', 'valence', 'acousticness', 'instrumentalness', 'speechiness'] as const
 export type FeatKey = typeof KEYS[number]
 /** Klangvergleich einstellbar (Feinabstimmung unter Werkzeuge): k = so viele ähnliche Songs stimmen ab, w = Faktor je Merkmal. */
-export interface SoundParams { k: number; w: Partial<Record<FeatKey, number>> }
+/** size: Größen-Ausgleich 0–1 – große, bunt gemischte Playlists bekommen sonst bei jedem Song Stimmen, nur weil sie groß sind. */
+export interface SoundParams { k: number; w: Partial<Record<FeatKey, number>>; size?: number }
 export const DEFAULT_SOUND: SoundParams = { k: 20, w: {} }
 
 const spotifyId = (x: any): string | undefined => x?.href?.match(/track\/([A-Za-z0-9]+)/)?.[1]
@@ -131,8 +132,8 @@ export async function soundOf(t: Track, stored: Map<string, Sound>): Promise<Fea
 }
 
 /** Die ähnlichsten Songs der Sammlung stimmen für ihre Playlists. Ergebnis: Playlist-ID → Anteil 0–1. */
-export function soundVotes(f: Feat, stored: Map<string, Sound>, inPl: Map<string, string[]>, skipId?: string, p: SoundParams = DEFAULT_SOUND) {
-  return votesOf(nearest(f, stored, inPl, skipId, p.w), p.k)
+export function soundVotes(f: Feat, stored: Map<string, Sound>, inPl: Map<string, string[]>, skipId?: string, p: SoundParams = DEFAULT_SOUND, sizes?: Map<string, number>) {
+  return votesOf(nearest(f, stored, inPl, skipId, p.w), p.k, sizes, p.size)
 }
 
 /** Alle Songs der Sammlung mit Klangdaten, nach Abstand sortiert (der Song selbst nie). */
@@ -146,13 +147,18 @@ export function nearest(f: Feat, stored: Map<string, Sound>, inPl: Map<string, s
 }
 
 /** Die k nächsten stimmen ab, nähere zählen mehr. Ergebnis: Playlist-ID → Anteil 0–1. */
-export function votesOf(near: { d: number; pls: string[] }[], k: number) {
+export function votesOf(near: { d: number; pls: string[] }[], k: number, sizes?: Map<string, number>, size = 0) {
   const votes = new Map<string, number>()
   let total = 0
   for (const { d, pls } of near.slice(0, k)) {
     const w = 1 / (.05 + d)
     for (const p of pls) votes.set(p, (votes.get(p) ?? 0) + w)
     total += w
+  }
+  if (size > 0 && sizes?.size) {   // Stimmen relativ zur Playlist-Größe: „mehr ähnliche Songs als bei dieser Größe zu erwarten“
+    const avg = [...sizes.values()].reduce((a, b) => a + b, 0) / sizes.size
+    total = 0
+    for (const [p, v] of votes) { const a = v / ((sizes.get(p) ?? avg) / avg) ** size; votes.set(p, a); total += a }
   }
   for (const [p, v] of votes) votes.set(p, v / (total || 1))
   return votes

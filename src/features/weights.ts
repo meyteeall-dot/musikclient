@@ -19,6 +19,7 @@ export interface Optimized {
 const GRID = [0, .25, .5, .75, 1, 1.5, 2, 3, 4, 6]   // Gewichte je Baustein
 const K_GRID = [5, 10, 15, 20, 30, 40, 60]          // so viele ähnliche Songs stimmen ab
 const F_GRID = [0, .5, 1, 1.5, 2, 3]                // Faktor je Klang-Merkmal
+const SIZE_GRID = [0, .25, .5, .75, 1]              // Größen-Ausgleich
 const POOL = 150                                     // shortcut: Nachbarn außerhalb der 150 nächsten (Standard-Einstellung) werden nicht neu bewertet
 
 export const getWeights = async () => (await kv.get<Weights>('weights')) ?? {}
@@ -41,17 +42,19 @@ function top(c: Case, w: Weights) {
 export const hits = (cases: Case[], w: Weights) => cases.length ? cases.filter(c => c.inn.has(top(c, w))).length / cases.length : 0
 
 /** Klang-Bausteine mit anderen Klang-Einstellungen neu berechnen. */
+let SIZES: Map<string, number> | undefined   // Playlist-Größen der aktuellen Abstimmung
 function withSound(cases: SoundCase[], p: SoundParams): Case[] {
   return cases.map(c => {
     if (!c.f || !c.near) return c
     const near = c.near.map(n => ({ ...n, d: distanceTo(c.f!, n.feat, p.w) })).sort((a, b) => a.d - b.d)
-    const votes = votesOf(near, p.k)
+    const votes = votesOf(near, p.k, SIZES, p.size)
     return { inn: c.inn, ranking: c.ranking.map(r => ({ id: r.id, parts: { ...r.parts, sound: (votes.get(r.id) ?? 0) * 8 } })) }
   })
 }
 
 export async function optimizeAll(onProgress?: (text: string) => void): Promise<Optimized> {
   const lib = await loadLibrary()
+  SIZES = lib.plSize
   const name = new Map(lib.all.map(p => [p.id, p.name]))
   const where = new Map<string, { t: Track; inn: Set<string> }>()
   for (const p of lib.all) {
@@ -75,10 +78,11 @@ export async function optimizeAll(onProgress?: (text: string) => void): Promise<
   const startW = lib.weights, startS = lib.soundParams
 
   // 1) Klang: erst Anzahl der Nachbarn, dann Faktor je Merkmal, zwei Durchgänge
-  const sp: SoundParams = { k: startS.k, w: { ...startS.w } }
+  const sp: SoundParams = { k: startS.k, w: { ...startS.w }, size: startS.size ?? 0 }
   let best = hits(withSound(train, sp), startW)
   for (let pass = 0; pass < 2; pass++) {
     onProgress?.(`Klang: Anzahl ähnlicher Songs (Durchgang ${pass + 1}/2)`); await tick()
+    for (const g of SIZE_GRID) { const v = hits(withSound(train, { ...sp, size: g }), startW); if (v > best + 1e-9) { best = v; sp.size = g } }
     for (const k of K_GRID) { const v = hits(withSound(train, { ...sp, k }), startW); if (v > best + 1e-9) { best = v; sp.k = k } }
     for (const f of KEYS as readonly FeatKey[]) {
       onProgress?.(`Klang: ${f} (Durchgang ${pass + 1}/2)`); await tick()

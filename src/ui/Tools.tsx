@@ -232,7 +232,7 @@ function WeightsPanel({ onError }: { onError: (m: string) => void }) {
   const reset = async () => { await resetTuning(); setCur({ w: {}, s: DEFAULT_SOUND }); setRes(null); setSaved(false) }
   const p = (v: number) => `${Math.round(v * 100)} %`
   const gain = res ? res.after.test - res.before.test : 0
-  const tuned = Object.keys(cur.w).length > 0 || cur.s.k !== DEFAULT_SOUND.k || Object.keys(cur.s.w).length > 0
+  const tuned = Object.keys(cur.w).length > 0 || cur.s.k !== DEFAULT_SOUND.k || Object.keys(cur.s.w).length > 0 || !!cur.s.size
   return <section className="panel glass">
     <h2>Feinabstimmung</h2>
     <p className="cap left">Die App stellt erst den Klangvergleich fein ein (wie viele ähnliche Songs abstimmen, wie stark Energie, Sprechgesang, Tempo … zählen), dann die Gewichte der Fakten – gelernt an der einen Hälfte deiner Songs, geprüft an der anderen. Dazu: welche Playlists am häufigsten verwechselt werden. Ohne KI, kostenlos, ein paar Minuten.</p>
@@ -249,6 +249,7 @@ function WeightsPanel({ onError }: { onError: (m: string) => void }) {
         <tbody>
           {(Object.keys(SIGNALS) as Signal[]).map(s => <tr key={s}><td>{SIGNALS[s]}</td><td>×{cur.w[s] ?? 1}</td>{res && <td>×{res.weights[s] ?? 1}</td>}</tr>)}
           <tr><td>Klang: ähnliche Songs</td><td>{cur.s.k}</td>{res && <td>{res.sound.k}</td>}</tr>
+          <tr><td>Klang: Größen-Ausgleich</td><td>{Math.round((cur.s.size ?? 0) * 100)} %</td>{res && <td>{Math.round((res.sound.size ?? 0) * 100)} %</td>}</tr>
           {KEYS.map(k => <tr key={k}><td>Klang: {FEAT_NAMES[k]}</td><td>×{cur.s.w[k] ?? 1}</td>{res && <td>×{res.sound.w[k] ?? 1}</td>}</tr>)}
         </tbody>
       </table>
