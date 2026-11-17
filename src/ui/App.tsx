@@ -3,7 +3,7 @@ import { db, kv, type Playlist, type Profile } from '../data/db'
 import { syncPlaylists, syncTracks } from '../data/sync'
 import { AI_DEFAULTS, hasAi } from '../ai'
 import { buildProfiles } from '../features/profiles'
-import { getExcluded } from '../features/suggest'
+import { getExcluded, getNoLearn, setExcluded, setNoLearn } from '../features/suggest'
 import { clearPause, NotLoggedIn, RateLimited } from '../spotify/api'
 import { startWebPlayer } from '../spotify/player'
 import { accessToken, handleRedirect, login, logout, redirectUri } from '../spotify/auth'
@@ -29,6 +29,8 @@ export function App() {
   const [playlists, setPlaylists] = useState<Playlist[]>([])
   const [profiles, setProfiles] = useState(new Map<string, Profile>())
   const [excluded, setExcludedIds] = useState(new Set<string>())
+  const [noLearn, setNoLearnIds] = useState(new Set<string>())
+  const [manage, setManage] = useState(false)
   const [status, setStatus] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -38,6 +40,7 @@ export function App() {
     setPlaylists((await d.getAll('playlists')).sort((a, b) => a.name.localeCompare(b.name)))
     setProfiles(new Map((await d.getAll('profiles')).map(p => [p.id, p])))
     setExcludedIds(await getExcluded())
+    setNoLearnIds(await getNoLearn())
   }
 
   const running = useRef(false)
@@ -123,14 +126,15 @@ export function App() {
 
       {error && <div className="panel glass error" onClick={() => setError('')}>{error}</div>}
 
-      <Scroll key={`${tab}${openId ?? ''}${fresh}`}>
+      <Scroll key={`${tab}${openId ?? ''}${manage}${fresh}`}>
         {tab === 'search' && (loggedIn
           ? <Search onError={setError} onAdded={load} />
           : <div className="panel glass center"><p className="cap">Noch nicht mit Spotify verbunden.</p>
               <button className="pill glass hot" onClick={() => setTab('settings')}>Zu den Einstellungen</button></div>)}
         {tab === 'playlists' && (loggedIn
           ? (open ? <PlaylistView p={open} profile={profiles.get(open.id)} onBack={() => setOpenId(null)} onError={setError} onChanged={load} />
-            : <Playlists items={playlists} profiles={profiles} excluded={excluded} onOpen={setOpenId} />)
+            : manage ? <Manage items={playlists} excluded={excluded} noLearn={noLearn} onChanged={load} onBack={() => setManage(false)} />
+            : <Playlists items={playlists} profiles={profiles} excluded={excluded} noLearn={noLearn} onOpen={setOpenId} onManage={() => setManage(true)} />)
           : <div className="panel glass center"><p className="cap">Noch nicht mit Spotify verbunden.</p>
               <button className="pill glass hot" onClick={() => setTab('settings')}>Zu den Einstellungen</button></div>)}
         {tab === 'tools' && <Tools onError={setError} onAdded={load} />}
@@ -139,7 +143,7 @@ export function App() {
           onLogout={async () => { await logout(); setLoggedIn(false) }} />}
       </Scroll>
 
-      <Tabs tab={tab} onPick={t => { setTab(t); setOpenId(null); setFresh(f => f + 1) }} />
+      <Tabs tab={tab} onPick={t => { setTab(t); setOpenId(null); setManage(false); setFresh(f => f + 1) }} />
     </div>
   )
 }
@@ -236,12 +240,13 @@ function Tabs({ tab, onPick }: { tab: Tab; onPick: (t: Tab) => void }) {
   </nav>
 }
 
-function Playlists({ items, profiles, excluded, onOpen }: { items: Playlist[]; profiles: Map<string, Profile>; excluded: Set<string>; onOpen: (id: string) => void }) {
+function Playlists({ items, profiles, excluded, noLearn, onOpen, onManage }: { items: Playlist[]; profiles: Map<string, Profile>; excluded: Set<string>; noLearn: Set<string>; onOpen: (id: string) => void; onManage: () => void }) {
   return <ul className="list">
-    {[...items].sort((a, b) => +excluded.has(a.id) - +excluded.has(b.id)).map(p => {   // ignorierte ans Ende
+    <li className="actions center"><button className="pill glass" onClick={onManage}>Playlists verwalten</button></li>
+    {[...items].sort((a, b) => +excluded.has(a.id) + +noLearn.has(a.id) - +excluded.has(b.id) - +noLearn.has(b.id)).map(p => {   // abgewählte ans Ende
       const pr = profiles.get(p.id)
-      return <li key={p.id}><CoverRow image={p.image} title={p.name} onClick={() => onOpen(p.id)} accent={excluded.has(p.id)}
-        sub={`${p.total} Songs · ${p.ownedByMe ? 'eigene' : p.owner}${excluded.has(p.id) ? ' · ignoriert' : ''}${p.tracksBlocked ? ' · Tracks gesperrt' : p.tracksSnapshot ? '' : ' · wird noch eingelesen'}`}
+      return <li key={p.id}><CoverRow image={p.image} title={p.name} onClick={() => onOpen(p.id)} accent={excluded.has(p.id) || noLearn.has(p.id)}
+        sub={`${p.total} Songs · ${p.ownedByMe ? 'eigene' : p.owner}${excluded.has(p.id) ? ' · nicht vorschlagen' : ''}${noLearn.has(p.id) ? ' · kein Vorbild' : ''}${p.tracksBlocked ? ' · Tracks gesperrt' : p.tracksSnapshot ? '' : ' · wird noch eingelesen'}`}
         extra={pr && <small className="prof">{[pr.genres.slice(0, 2).join(', '), pr.era, pr.mood].filter(Boolean).join(' · ')}</small>} /></li>
     })}
   </ul>
@@ -367,4 +372,35 @@ function SoundStatus() {
     <p className="cap left">Tempo, Energie, Tanzbarkeit und Stimmung jedes Songs – damit vergleicht die App Songs nach echtem Klang. Quelle: ReccoBeats (kostenlos). Fehlende schätzt die KI; beim Abgleich sucht die App nach und nach andere Versionen mit echten Daten.</p>
     {st && <p className="cap left">{all ? `${st.echt} echt · ${st.schätzung} geschätzt · ${st.fehlt} offen (von ${all} Songs)` : 'Noch keine – kommt beim nächsten Abgleich.'}</p>}
   </section>
+}
+
+/** Alle Playlists auf einen Blick: „Vorschlagen“ (Songs dürfen hierher) und „Lernen“ (Songs dienen als Vorbild). */
+function Manage({ items, excluded: ex0, noLearn: nl0, onChanged, onBack }: { items: Playlist[]; excluded: Set<string>; noLearn: Set<string>; onChanged: () => void; onBack: () => void }) {
+  // Schalter sofort umlegen; gespeichert wird im Hintergrund, die Liste lädt danach nach
+  const [excluded, setEx] = useState(ex0), [noLearn, setNl] = useState(nl0)
+  const flip = async (which: 'ex' | 'nl', id: string, on: boolean) => {
+    const set = (s: Set<string>) => { const n = new Set(s); if (on) n.add(id); else n.delete(id); return n }
+    if (which === 'ex') { setEx(set); await setExcluded(id, on) } else { setNl(set); await setNoLearn(id, on) }
+    onChanged()
+  }
+  return <div className="panels">
+    <section className="panel glass">
+      <h2>Playlists verwalten</h2>
+      <p className="cap left"><b>Vorschlagen</b>: die App darf Songs in diese Playlist vorschlagen. <b>Lernen</b>: die Songs dieser Playlist dienen als Vorbild (Klang, Künstler, Trefferquote, Feinabstimmung). Sammel-Playlists am besten bei beidem abwählen, Zweck-Playlists mit gutem Inhalt nur bei „Vorschlagen“.</p>
+      <p className="cap left">Danach Trefferquote und Feinabstimmung neu laufen lassen.</p>
+    </section>
+    <ul className="list">
+      {[...items].sort((a, b) => a.name.localeCompare(b.name)).map(p => {
+        const own = p.ownedByMe || p.collaborative, sug = own && !excluded.has(p.id), learn = !noLearn.has(p.id)
+        return <li key={p.id}><CoverRow image={p.image} title={p.name} accent={!sug || !learn}
+          sub={`${p.total} Songs · ${p.ownedByMe ? 'eigene' : p.owner}`}
+          extra={<span className="toggles">
+            {own ? <button className={'pill glass mini' + (sug ? ' hot' : '')} aria-pressed={sug} onClick={() => flip('ex', p.id, sug)}>{sug ? '✓ ' : ''}Vorschlagen</button>
+              : <span className="cap">fremd – nur Lernen</span>}
+            <button className={'pill glass mini' + (learn ? ' hot' : '')} aria-pressed={learn} onClick={() => flip('nl', p.id, learn)}>{learn ? '✓ ' : ''}Lernen</button>
+          </span>} /></li>
+      })}
+    </ul>
+    <div className="actions center"><button className="pill glass" onClick={onBack}>Fertig</button></div>
+  </div>
 }

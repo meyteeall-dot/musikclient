@@ -53,6 +53,14 @@ export async function setExcluded(id: string, on: boolean) {
   await kv.set('excluded', [...ex])
 }
 
+/** Playlists, die nicht als Vorbild dienen (z. B. Sammel-Playlists): ihre Songs zählen nirgends mit – Klang, Künstler, Tests. */
+export const getNoLearn = async () => new Set((await kv.get<string[]>('noLearn')) ?? [])
+export async function setNoLearn(id: string, on: boolean) {
+  const ex = await getNoLearn()
+  if (on) ex.add(id); else ex.delete(id)
+  await kv.set('noLearn', [...ex])
+}
+
 /** Bis zu n Songs einer Playlist, die der KI zeigen, wie sie klingt: zuerst gleicher Künstler, dann nahe Jahre, dann quer verteilt. */
 function sample(song: Track, tracks: Track[], n: number) {
   const ids = new Set(song.artistIds)
@@ -87,13 +95,15 @@ export type Library = Awaited<ReturnType<typeof loadLibrary>>
 export async function loadLibrary() {
   status('lese Songs aus dem Speicher')
   const d = await db
-  const [all, profiles, choices, excluded, tracks, lessons, weights, soundParams] = await Promise.all([d.getAll('playlists'), d.getAll('profiles'), d.getAll('choices'), getExcluded(), d.getAll('tracks'), getLessons(), kv.get<Weights>('weights'), kv.get<SoundParams>('soundParams')])
+  const [all, profiles, choices, excluded, allTracks, lessons, weights, soundParams, noLearn] = await Promise.all([d.getAll('playlists'), d.getAll('profiles'), d.getAll('choices'), getExcluded(), d.getAll('tracks'), getLessons(), kv.get<Weights>('weights'), kv.get<SoundParams>('soundParams'), getNoLearn()])
+  const tracks = allTracks.map(t => noLearn.has(t.id) ? { id: t.id, tracks: [] } : t)   // „Lernen“ aus: Songs zählen nirgends als Vorbild
   const sound = new Map((await d.getAll('sound')).map(s => [s.id, s]))
   const inPl = new Map<string, string[]>()   // Song → Playlists, in denen er liegt (für den Klangvergleich)
   for (const t of tracks) for (const x of t.tracks) inPl.set(x.id, [...(inPl.get(x.id) ?? []), t.id])
   const plSize = new Map<string, number>()   // Songs mit Klangdaten je Playlist (für den Größen-Ausgleich)
   for (const t of tracks) plSize.set(t.id, t.tracks.filter(x => { const s = sound.get(x.id); return s && s.src !== 'fehlt' }).length)
-  return { all, profiles, choices, excluded, lessons, sound, inPl, plSize, weights: weights ?? {}, soundParams: soundParams ?? DEFAULT_SOUND, tracks: new Map(tracks.map(t => [t.id, t.tracks])) }
+  const has = new Map(allTracks.map(t => [t.id, new Set(t.tracks.map(x => x.id))]))   // „schon drin“ immer mit allen Songs
+  return { all, profiles, choices, excluded, noLearn, has, lessons, sound, inPl, plSize, weights: weights ?? {}, soundParams: soundParams ?? DEFAULT_SOUND, tracks: new Map(tracks.map(t => [t.id, t.tracks])) }
 }
 
 async function compute(song: Track, opts: { test?: boolean; local?: boolean; lib?: Library }): Promise<SuggestResult> {
@@ -112,7 +122,7 @@ async function compute(song: Track, opts: { test?: boolean; local?: boolean; lib
   for (const p of all) {
     if ((!p.ownedByMe && !p.collaborative) || excluded.has(p.id) || never.has(p.id)) continue   // fremde, ignorierte, „auf keinen Fall"
     let tracks = tracksOf.get(p.id) ?? []
-    if (tracks.some(t => t.id === song.id)) {
+    if (lib.has.get(p.id)?.has(song.id)) {
       if (!opts.test) { contains.push(p); continue }
       tracks = tracks.filter(t => t.id !== song.id)
     }

@@ -1,7 +1,7 @@
 /* KI-Playlist aus der eigenen Sammlung: ein paar Worte → passende Playlists (Stufe 1) → Songs daraus in guter Reihenfolge (Stufe 2)
    → als neue private Playlist in Spotify. Nur Songs, die schon in deinen Playlists liegen. */
 import { completeJson } from '../ai'
-import { db, type Track } from '../data/db'
+import { db, kv, type Track } from '../data/db'
 import { api } from '../spotify/api'
 import { setExcluded } from './suggest'
 
@@ -13,7 +13,8 @@ export interface Mix { name: string; description: string; tracks: Track[]; crite
 export async function buildMix(words: string, count: number): Promise<Mix> {
   const d = await db
   const profOf = new Map((await d.getAll('profiles')).map(p => [p.id, p]))
-  const lists = (await d.getAll('playlists')).filter(p => profOf.has(p.id) && !p.tracksBlocked)
+  const noLearn = new Set((await kv.get<string[]>('noLearn')) ?? [])   // Sammel-Playlists liefern keine Songs für Mixe
+  const lists = (await d.getAll('playlists')).filter(p => profOf.has(p.id) && !p.tracksBlocked && !noLearn.has(p.id))
   if (!lists.length) throw new Error('Noch keine Profile – erst abgleichen und Profile erzeugen lassen.')
   const r1 = await completeJson<{ top: number[] }>({
     system: 'Du stellst aus der Musiksammlung eines Nutzers Playlists zusammen. Antworte ausschließlich mit JSON.',

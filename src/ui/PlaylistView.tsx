@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { db, type Playlist, type Profile, type Track } from '../data/db'
-import { getExcluded, setExcluded } from '../features/suggest'
+import { getExcluded, getNoLearn, setExcluded, setNoLearn } from '../features/suggest'
 import { findOutliers, saveDescription, writeDescription, type Outlier } from '../features/tools'
 import { addToPlaylist } from '../spotify/api'
 import { play } from '../spotify/player'
@@ -14,6 +14,9 @@ export function PlaylistView({ p, profile, onBack, onError, onChanged }: { p: Pl
   const [ignored, setIgnored] = useState(false)
   useEffect(() => { getExcluded().then(ex => setIgnored(ex.has(p.id))) }, [p.id])
   const toggle = async () => { await setExcluded(p.id, !ignored); setIgnored(!ignored); onChanged() }
+  const [noLearn, setNoLearnState] = useState(false)
+  useEffect(() => { getNoLearn().then(ex => setNoLearnState(ex.has(p.id))) }, [p.id])
+  const toggleLearn = async () => { await setNoLearn(p.id, !noLearn); setNoLearnState(!noLearn); onChanged() }
   const [outliers, setOutliers] = useState<Outlier[] | 'busy' | null>(null)
   const [moved, setMoved] = useState(new Set<string>())
   const [desc, setDesc] = useState<string | 'busy' | null>(null)
@@ -30,7 +33,9 @@ export function PlaylistView({ p, profile, onBack, onError, onChanged }: { p: Pl
     {profile?.summary && <p className="cap">{profile.summary}</p>}
     {own && <div className="actions center">
       <button className={'pill glass' + (ignored ? ' hot' : '')} aria-pressed={ignored} onClick={toggle}>
-        {ignored ? '✓ Bei Vorschlägen ignoriert' : 'Bei Vorschlägen ignorieren'}</button>
+        {ignored ? '✓ Wird nicht vorgeschlagen' : 'Nicht vorschlagen'}</button>
+      <button className={'pill glass' + (noLearn ? ' hot' : '')} aria-pressed={noLearn} onClick={toggleLearn}>
+        {noLearn ? '✓ Kein Vorbild' : 'Nicht als Vorbild nutzen'}</button>
       {!!tracks?.length && <button className="pill glass" disabled={outliers === 'busy'} onClick={scan}>{outliers === 'busy' ? 'Prüfe …' : 'Fremdkörper finden'}</button>}
       {p.ownedByMe && <button className="pill glass" disabled={desc === 'busy'} onClick={write}>{desc === 'busy' ? 'Schreibe …' : 'Beschreibung schreiben'}</button>}
     </div>}
