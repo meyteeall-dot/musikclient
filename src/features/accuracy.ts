@@ -9,11 +9,14 @@ import { loadLibrary, rankWithout, SIGNALS, suggest, type Signal } from './sugge
 export interface Miss { song: string; trackId?: string; expected: string[]; got: string[]; top3?: boolean }
 /** Ein geprüfter Song, live für die Anzeige. */
 export interface Step { song: string; top1: boolean; top3: boolean; failed?: string }
+export interface Pair { m: number; l: boolean; a: boolean }
 export type Ablation = Partial<Record<Signal, { top1: number; top3: number }>>
 export interface Accuracy {
   at: number; n: number; top1: number; top3: number; provider: string; misses: Miss[]; local?: { top1: number; top3: number }; tested?: string[]
   /** Signal-Analyse: Treffer der Punkte, wenn jeweils ein Baustein fehlt (Vergleich mit local) */
   ablation?: Ablation
+  /** je Song: Punkte-Vorsprung, Punkte richtig, KI richtig – daraus die Schwelle „KI nur bei knappen Fällen“ */
+  pairs?: Pair[]
 }
 
 export const lastAccuracy = () => kv.get<Accuracy>('accuracy')
@@ -49,7 +52,7 @@ export async function measureAccuracy(n: number, onStep?: (done: number, total: 
   let top1 = 0, top3 = 0, provider = opts.localOnly ? 'nur Punkte' : 'lokal', done = 0, lastErr = ''
   const tested: string[] = [], ai = await hasAi()
   const local = { top1: 0, top3: 0 }   // dieselben Songs nur mit lokalen Punkten: kostet nichts, zeigt den Wert der KI
-  const ablation: Ablation = {}
+  const ablation: Ablation = {}, pairs: Pair[] = []
   const misses: Miss[] = []
   onStep?.(0, pool.length)
   for (const [i, { t, in: inn }] of pool.entries()) {
@@ -78,6 +81,7 @@ export async function measureAccuracy(n: number, onStep?: (done: number, total: 
       }
       if (opts.localOnly) ids = lids
       const ok1 = inn.has(ids[0]), ok3 = ids.some(id => inn.has(id))
+      if (!opts.localOnly) pairs.push({ m: lres.margin ?? Infinity, l: inn.has(lids[0]), a: ok1 })
       if (ok1) top1++
       if (ok3) top3++
       if (!ok1) {   // Platz 1 daneben: merken und lernen (nur aus echten KI-Fehlgriffen)
@@ -92,7 +96,7 @@ export async function measureAccuracy(n: number, onStep?: (done: number, total: 
     }
   }
   if (!done && !opts.stop?.()) throw new Error('Kein Song ließ sich prüfen: ' + lastErr)
-  const r = { at: Date.now(), n: done, top1, top3, provider, misses, local, tested, ablation }
+  const r = { at: Date.now(), n: done, top1, top3, provider, misses, local, tested, ablation, pairs }
   if (done) await kv.set('accuracy', r)
   return r
 }

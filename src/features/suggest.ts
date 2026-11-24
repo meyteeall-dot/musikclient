@@ -16,6 +16,8 @@ export interface SuggestResult {
   suggestions: Suggestion[]; contains: Playlist[]; provider: string
   /** nur im Test: alle Kandidaten mit ihren Punkte-Bausteinen */
   ranking?: { id: string; parts: Parts }[]
+  /** Punkte-Vorsprung von Platz 1 vor Platz 2 – klein = unsicher */
+  margin?: number
 }
 
 interface Cand { p: Playlist; prof?: Profile; tracks: Track[]; k: number; w: number; era: boolean; score: number; kl: number; parts: Parts }
@@ -95,7 +97,7 @@ export type Library = Awaited<ReturnType<typeof loadLibrary>>
 export async function loadLibrary() {
   status('lese Songs aus dem Speicher')
   const d = await db
-  const [all, profiles, choices, excluded, allTracks, lessons, weights, soundParams, noLearn, bias] = await Promise.all([d.getAll('playlists'), d.getAll('profiles'), d.getAll('choices'), getExcluded(), d.getAll('tracks'), getLessons(), kv.get<Weights>('weights'), kv.get<SoundParams>('soundParams'), getNoLearn(), kv.get<Record<string, number>>('bias')])
+  const [all, profiles, choices, excluded, allTracks, lessons, weights, soundParams, noLearn, bias, aiMargin] = await Promise.all([d.getAll('playlists'), d.getAll('profiles'), d.getAll('choices'), getExcluded(), d.getAll('tracks'), getLessons(), kv.get<Weights>('weights'), kv.get<SoundParams>('soundParams'), getNoLearn(), kv.get<Record<string, number>>('bias'), kv.get<number>('aiMargin')])
   const tracks = allTracks.map(t => noLearn.has(t.id) ? { id: t.id, tracks: [] } : t)   // „Lernen“ aus: Songs zählen nirgends als Vorbild
   const sound = new Map((await d.getAll('sound')).map(s => [s.id, s]))
   const inPl = new Map<string, string[]>()   // Song → Playlists, in denen er liegt (für den Klangvergleich)
@@ -103,7 +105,7 @@ export async function loadLibrary() {
   const plSize = new Map<string, number>()   // Songs mit Klangdaten je Playlist (für den Größen-Ausgleich)
   for (const t of tracks) plSize.set(t.id, t.tracks.filter(x => { const s = sound.get(x.id); return s && s.src !== 'fehlt' }).length)
   const has = new Map(allTracks.map(t => [t.id, new Set(t.tracks.map(x => x.id))]))   // „schon drin“ immer mit allen Songs
-  return { all, profiles, choices, excluded, noLearn, has, lessons, sound, inPl, plSize, weights: weights ?? {}, soundParams: soundParams ?? DEFAULT_SOUND, bias: bias ?? {}, tracks: new Map(tracks.map(t => [t.id, t.tracks])) }
+  return { all, profiles, choices, excluded, noLearn, has, lessons, sound, inPl, plSize, weights: weights ?? {}, soundParams: soundParams ?? DEFAULT_SOUND, bias: bias ?? {}, aiMargin, tracks: new Map(tracks.map(t => [t.id, t.tracks])) }
 }
 
 async function compute(song: Track, opts: { test?: boolean; local?: boolean; lib?: Library }): Promise<SuggestResult> {
@@ -133,7 +135,11 @@ async function compute(song: Track, opts: { test?: boolean; local?: boolean; lib
   cands.sort((a, b) => b.score - a.score)
 
   let picks: Suggestion[] = [], provider = 'lokal'
-  if (cands.length > 3 && !opts.local && await hasAi()) try {
+  const margin = cands.length > 1 ? cands[0].score - cands[1].score : Infinity
+  // KI nur bei knappen Fällen: Schwelle aus der Trefferquote gelernt (im Test immer KI, damit gemessen werden kann)
+  const clear = !opts.test && lib.aiMargin != null && margin >= lib.aiMargin
+  if (clear) provider = 'Punkte (eindeutig)'
+  if (cands.length > 3 && !opts.local && !clear && await hasAi()) try {
     // Stufe 1: aus allen Playlists (Kurzprofil) die engere Wahl, ergänzt um die lokal stärksten
     let short = cands.slice(0, SHORTLIST)
     if (cands.length > SHORTLIST) {
@@ -182,7 +188,7 @@ ${blocks}` })
     if (picks.some(s => s.playlist.id === c.p.id)) continue
     picks.push({ playlist: c.p, reason: localReason(song, c) })
   }
-  return { suggestions: picks, contains, provider, ...(opts.test ? { ranking: cands.map(c => ({ id: c.p.id, parts: c.parts })) } : {}) }
+  return { suggestions: picks, contains, provider, margin, ...(opts.test ? { ranking: cands.map(c => ({ id: c.p.id, parts: c.parts })) } : {}) }
 }
 
 function localReason(song: Track, c: Cand) {

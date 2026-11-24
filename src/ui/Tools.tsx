@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { lastAccuracy, measureAccuracy, type Ablation, type Accuracy, type Miss, type Step } from '../features/accuracy'
+import { lastAccuracy, measureAccuracy, type Ablation, type Accuracy, type Miss, type Pair, type Step } from '../features/accuracy'
+import { kv } from '../data/db'
 import { SIGNALS, type Signal, type Weights } from '../features/suggest'
 import { getBias, getSoundParams, getWeights, optimizeAll, resetTuning, saveTuning, type Optimized } from '../features/weights'
 import { DEFAULT_SOUND, KEYS, type SoundParams } from '../features/sound'
@@ -28,7 +29,7 @@ export function Tools({ onError, onAdded }: { onError: (m: string) => void; onAd
 
 const pct = (a: number, n: number) => `${Math.round(a / n * 100)} %`
 
-type Totals = { n: number; top1: number; top3: number; l1: number; l3: number; misses: Miss[]; ablation: Ablation; points: boolean }
+type Totals = { n: number; top1: number; top3: number; l1: number; l3: number; misses: Miss[]; ablation: Ablation; points: boolean; pairs: Pair[] }
 
 function AccuracyPanel({ onError }: { onError: (m: string) => void }) {
   const [res, setRes] = useState<Accuracy | null>(null)
@@ -61,7 +62,7 @@ function AccuracyPanel({ onError }: { onError: (m: string) => void }) {
     const lock = await (navigator as any).wakeLock?.request('screen').catch(() => null)   // Bildschirm anlassen, solange es läuft
     try {
       if (!endless) { setRes(await round(n, new Set(), 1)); return }
-      const skip = new Set<string>(), t: Totals = { n: 0, top1: 0, top3: 0, l1: 0, l3: 0, misses: [], ablation: {}, points: localOnly }
+      const skip = new Set<string>(), t: Totals = { n: 0, top1: 0, top3: 0, l1: 0, l3: 0, misses: [], ablation: {}, points: localOnly, pairs: [] }
       setTot({ ...t })
       for (let r = 1; !stop.current; r++) {
         let x: Accuracy
@@ -78,7 +79,7 @@ function AccuracyPanel({ onError }: { onError: (m: string) => void }) {
           setWait(0); continue
         }
         x.tested?.forEach(id => skip.add(id))
-        Object.assign(t, { n: t.n + x.n, top1: t.top1 + x.top1, top3: t.top3 + x.top3, l1: t.l1 + (x.local?.top1 ?? 0), l3: t.l3 + (x.local?.top3 ?? 0), misses: [...x.misses, ...t.misses].slice(0, 100) })
+        Object.assign(t, { n: t.n + x.n, top1: t.top1 + x.top1, top3: t.top3 + x.top3, l1: t.l1 + (x.local?.top1 ?? 0), l3: t.l3 + (x.local?.top3 ?? 0), misses: [...x.misses, ...t.misses].slice(0, 100), pairs: [...t.pairs, ...(x.pairs ?? [])].slice(-5000) })
         for (const [s, v] of Object.entries(x.ablation ?? {}) as [Signal, { top1: number; top3: number }][]) {
           const a = t.ablation[s] ??= { top1: 0, top3: 0 }; a.top1 += v.top1; a.top3 += v.top3
         }
@@ -91,7 +92,7 @@ function AccuracyPanel({ onError }: { onError: (m: string) => void }) {
   const forget = async (id?: string) => { if (!id) return; await forgetLesson(id); setForgot(f => new Set(f).add(id)); setLearned((await getLessons()).length) }
 
   const busy = !!prog || !!wait
-  const show = endless && tot ? { n: tot.n, top1: tot.top1, top3: tot.top3, local: { top1: tot.l1, top3: tot.l3 }, misses: tot.misses, ablation: tot.ablation } : res
+  const show = endless && tot ? { n: tot.n, top1: tot.top1, top3: tot.top3, local: { top1: tot.l1, top3: tot.l3 }, misses: tot.misses, ablation: tot.ablation, pairs: tot.pairs } : res
   const points = endless && tot ? tot.points : res?.provider === 'nur Punkte'   // „Nur Punkte“: nichts gelernt, kein KI-Vergleich
   const secs = prog ? Math.floor((Date.now() - prog.t0) / 1000) : 0
   return <section className="panel glass">
@@ -102,6 +103,7 @@ function AccuracyPanel({ onError }: { onError: (m: string) => void }) {
       <div><b>{pct(show.top3, show.n)}</b><small>unter den Top 3</small></div>
     </div>}
     {show?.local && show.n > 0 && !points && <p className="cap left">Ohne KI wären es {pct(show.local.top1, show.n)} auf Platz 1 und {pct(show.local.top3, show.n)} in den Top 3.</p>}
+    {!points && (show?.pairs?.length ?? 0) >= 10 && <HybridTable pairs={show!.pairs!} />}
     {show?.local && show.ablation && show.n > 0 && <SignalTable n={show.n} local={show.local} ablation={show.ablation} />}
     {show && <p className="cap left">{endless && tot ? `Endlos: ${tot.n} Songs geprüft` : `${show.n} Songs`}{res && !endless ? ` · ${res.provider} · ${new Date(res.at).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' })}` : ''} · {learned} Merksätze gelernt</p>}
     {!!show?.misses.length && <details className="misses"><summary>Daneben ({show.misses.length}){points ? '' : ' – daraus gelernt'}</summary>
@@ -268,4 +270,27 @@ function WeightsPanel({ onError }: { onError: (m: string) => void }) {
       {tuned && <button className="pill glass" disabled={!!busy} onClick={reset}>Zurücksetzen</button>}
     </div>
   </section>
+}
+
+const THRESHOLDS = [0, .5, 1, 1.5, 2, 3, 4, 6, 8, 12, Infinity]   // Punkte-Vorsprung, ab dem die KI nicht mehr gefragt wird
+
+/** KI nur bei knappen Fällen: für jede Schwelle, wie oft Platz 1 stimmt und wie viele Anfragen dann noch an die KI gehen. */
+function HybridTable({ pairs }: { pairs: Pair[] }) {
+  const [cur, setCur] = useState<number | undefined>()
+  const [saved, setSaved] = useState(false)
+  useEffect(() => { kv.get<number>('aiMargin').then(setCur) }, [])
+  const rows = THRESHOLDS.map(t => ({
+    t, acc: pairs.filter(p => (p.m >= t ? p.l : p.a)).length / pairs.length, ai: pairs.filter(p => p.m < t).length / pairs.length,
+  }))
+  const best = rows.reduce((a, r) => r.acc > a.acc + 1e-9 || (Math.abs(r.acc - a.acc) < 1e-9 && r.ai < a.ai) ? r : a)
+  const label = (t: number) => t === 0 ? 'nie KI (nur Punkte)' : t === Infinity ? 'immer KI' : `KI nur bei Vorsprung < ${t}`
+  const apply = async () => { if (best.t === Infinity) await kv.del('aiMargin'); else await kv.set('aiMargin', best.t); setCur(best.t === Infinity ? undefined : best.t); setSaved(true) }
+  return <details className="misses"><summary>KI nur bei knappen Fällen</summary>
+    <p className="cap left">Für jeden geprüften Song weiß die App, wie klar die Punkte führten und ob Punkte bzw. KI richtig lagen. So sieht man, ab welchem Vorsprung die KI nichts mehr bringt. {pairs.length} Songs.</p>
+    <table className="signals"><thead><tr><th>Regel</th><th>Platz 1</th><th>KI-Anfragen</th></tr></thead>
+      <tbody>{rows.map(r => <tr key={r.t} className={r === best ? 'best' : ''}><td>{label(r.t)}{r === best ? ' ★' : ''}</td><td>{Math.round(r.acc * 100)} %</td><td>{Math.round(r.ai * 100)} %</td></tr>)}</tbody>
+    </table>
+    <p className="cap left">Aktuell: {cur == null ? 'immer KI' : label(cur)}</p>
+    <div className="actions"><button className="pill glass hot mini" disabled={saved} onClick={apply}>{saved ? 'Übernommen ✓' : `Beste Regel übernehmen (${label(best.t)})`}</button></div>
+  </details>
 }
