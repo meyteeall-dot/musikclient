@@ -81,13 +81,13 @@ export function App() {
     }
     setBusy(false)
     running.current = false
-    // Steckbriefe im Hintergrund, höchstens 10 KI-Anfragen je Abgleich: blockiert den Abgleich-Knopf nicht; fertige Stapel bleiben gespeichert
+    // Steckbriefe im Hintergrund bis alle fertig sind oder alle KIs am Limit: blockiert den Abgleich-Knopf nicht; fertige Stapel bleiben gespeichert
     if (!styling.current && await hasAi()) {
       styling.current = true
       let base = 'Steckbriefe'
       const onAi = (e: Event) => setStatus(`${base} · ${(e as CustomEvent).detail.text}`)   // zeigen, welches Modell gerade arbeitet
       addEventListener('ai-status', onAi)
-      syncStyles((i, all) => { base = `Steckbriefe ${i}/${all} Songs`; setStatus(base) }, [], 10)
+      syncStyles((i, all) => { base = `Steckbriefe ${i}/${all} Songs`; setStatus(base) })
         .then(n => { if (n) setStatus('Steckbriefe: Stapel fertig, Rest beim nächsten Abgleich') }, e => { setStatus('Steckbriefe pausiert (KI-Limit)'); console.warn('Steckbriefe:', e) })
         .finally(() => { removeEventListener('ai-status', onAi); styling.current = false })
     }
