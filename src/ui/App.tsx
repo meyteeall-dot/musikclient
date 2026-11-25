@@ -45,7 +45,7 @@ export function App() {
     setNoLearnIds(await getNoLearn())
   }
 
-  const running = useRef(false)
+  const running = useRef(false), styling = useRef(false)
   const sync = useCallback(async () => {
     if (running.current) return   // Knopf, Timer und Start nicht doppelt laufen lassen
     running.current = true
@@ -70,8 +70,6 @@ export function App() {
         } catch (e) { await load(); setStatus('Profile unvollständig'); setError((e as Error).message) }   // fertige Stapel bleiben gespeichert, Rest beim nächsten Abgleich
         try { if (await estimateSound((i, all) => all && setStatus(`Klang schätzen ${i}/${all}`))) setStatus('Klang aktuell') }
         catch (e) { console.warn('Klang-Schätzung:', e) }
-        try { if (await syncStyles((i, all) => all && setStatus(`Steckbriefe ${i}/${all}`))) setStatus('Steckbriefe aktuell') }
-        catch (e) { setStatus('Steckbriefe unvollständig'); console.warn('Steckbriefe:', e) }   // fertige Stapel bleiben, Rest beim nächsten Abgleich
       }
       // Einmal am Tag selbst nachjustieren (ohne KI, nur übernommen, wenn es messbar besser trifft)
       if (Date.now() - ((await lastAutoTune())?.at ?? 0) > 86_400_000) autoTune().catch(e => console.warn('Selbst-Abstimmung:', e))
@@ -83,6 +81,13 @@ export function App() {
     }
     setBusy(false)
     running.current = false
+    // Steckbriefe im Hintergrund, höchstens 10 KI-Anfragen je Abgleich: blockiert den Abgleich-Knopf nicht; fertige Stapel bleiben gespeichert
+    if (!styling.current && await hasAi()) {
+      styling.current = true
+      syncStyles((i, all) => all && setStatus(`Steckbriefe ${i}/${all}`), [], 10)
+        .then(n => { if (n) setStatus('Steckbriefe: Stapel fertig, Rest beim nächsten Abgleich') }, e => { setStatus('Steckbriefe pausiert (KI-Limit)'); console.warn('Steckbriefe:', e) })
+        .finally(() => { styling.current = false })
+    }
   }, [])
 
   useEffect(() => {
