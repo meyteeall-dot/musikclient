@@ -9,10 +9,13 @@ const MAX = 2000   // shortcut: älteste fallen raus, wenn es mehr werden; bei B
 
 export const getLessons = async () => (await kv.get<Lesson[]>(KEY)) ?? []
 
-export async function addLesson(l: Lesson) {
-  const all = (await getLessons()).filter(x => x.trackId !== l.trackId)   // pro Song nur der neueste Merksatz
-  all.push(l)
-  await kv.set(KEY, all.slice(-MAX))
+let queue: Promise<unknown> = Promise.resolve()   // nacheinander schreiben: parallele Tests würden sich sonst Merksätze überschreiben
+export function addLesson(l: Lesson) {
+  return queue = queue.catch(() => {}).then(async () => {
+    const all = (await getLessons()).filter(x => x.trackId !== l.trackId)   // pro Song nur der neueste Merksatz
+    all.push(l)
+    await kv.set(KEY, all.slice(-MAX))
+  })
 }
 
 /** „Kein echter Fehler“: Merksatz für diesen Song wieder vergessen. */

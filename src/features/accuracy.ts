@@ -19,6 +19,8 @@ export interface Accuracy {
   pairs?: Pair[]
 }
 
+const PARALLEL = 4   // gleichzeitig geprüfte Songs im KI-Modus
+
 export const lastAccuracy = () => kv.get<Accuracy>('accuracy')
 
 /** skip: schon geprüfte Songs (Endlos-Modus). stop: true = nach dem aktuellen Song aufhören. */
@@ -55,10 +57,9 @@ export async function measureAccuracy(n: number, onStep?: (done: number, total: 
   const ablation: Ablation = {}, pairs: Pair[] = []
   const misses: Miss[] = []
   onStep?.(0, pool.length)
-  for (const [i, { t, in: inn }] of pool.entries()) {
-    if (opts.stop?.()) break
+  let next = 0, finished = 0
+  const check = async ({ t, in: inn }: { t: Track; in: Set<string> }) => {
     const song = `${t.artists[0]} – ${t.name}`
-    if (i && !opts.localOnly && provider.startsWith('Gemini')) await new Promise(r => setTimeout(r, 3000))   // KI-Minutenlimit schonen
     try {
       let ids: string[] = []
       if (!opts.localOnly) {
@@ -89,12 +90,15 @@ export async function measureAccuracy(n: number, onStep?: (done: number, total: 
         if (!opts.localOnly) await addLesson({ trackId: t.id, song, artistIds: t.artistIds, right: [...inn], wrong: ids[0], at: Date.now() })
       }
       done++; tested.push(t.id)
-      onStep?.(i + 1, pool.length, { song, top1: ok1, top3: ok3 })
+      onStep?.(++finished, pool.length, { song, top1: ok1, top3: ok3 })
     } catch (e) {   // ein Fehler bricht nicht die ganze Messung ab: Song zählt nicht mit
       lastErr = (e as Error).message
-      onStep?.(i + 1, pool.length, { song, top1: false, top3: false, failed: lastErr })
+      onStep?.(++finished, pool.length, { song, top1: false, top3: false, failed: lastErr })
     }
   }
+  // Mit KI: mehrere Songs gleichzeitig, jeder bei einem anderen Modell (die KI-Schicht verteilt); nur Punkte: einer nach dem anderen
+  const worker = async () => { while (next < pool.length && !opts.stop?.()) await check(pool[next++]) }
+  await Promise.all(Array.from({ length: opts.localOnly ? 1 : PARALLEL }, worker))
   if (!done && !opts.stop?.()) throw new Error('Kein Song ließ sich prüfen: ' + lastErr)
   const r = { at: Date.now(), n: done, top1, top3, provider, misses, local, tested, ablation, pairs }
   if (done) await kv.set('accuracy', r)

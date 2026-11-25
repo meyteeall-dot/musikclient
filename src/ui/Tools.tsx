@@ -71,7 +71,7 @@ function AccuracyPanel({ onError }: { onError: (m: string) => void }) {
       setTot({ ...t })
       for (let r = 1; !stop.current; r++) {
         let x: Accuracy
-        try { x = await round(localOnly ? 50 : 10, skip, r) }
+        try { x = await round(localOnly ? 50 : 20, skip, r) }
         catch (e) {
           const m = (e as Error).message
           if (m.startsWith('Alle Songs') && localOnly) break   // nur Punkte: jeder Song einmal reicht, mehr Runden ändern nichts
