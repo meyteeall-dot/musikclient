@@ -1,7 +1,7 @@
 import { createRoot } from 'react-dom/client'
 import { registerSW } from 'virtual:pwa-register'
 import { persist } from './data/backup'
-import { AI_DEFAULTS, AI_PRESETS, type ExtraAi } from './ai'
+import { AI_DEFAULTS, AI_PRESETS, refreshModels, type ExtraAi } from './ai'
 import { kv } from './data/db'
 import { App } from './ui/App'
 import { applyGlass, applyTheme, initGlass, GLASS_DEFAULTS, type GlassValues, type ThemeId } from './ui/glass/engine'
@@ -17,6 +17,8 @@ if (!(await kv.get('aiMigr1'))) {
   if (!extra.some(x => x.name === 'Mistral')) await kv.set('aiExtra', [...extra, { ...mistral, id: crypto.randomUUID(), key: '' }])
   await kv.set('aiMigr1', true)
 }
+// Einmal am Tag neue Modelle der Anbieter eintragen (im Hintergrund)
+if (Date.now() - ((await kv.get<number>('modelsAt')) ?? 0) > 86_400_000) refreshModels().catch(() => {})
 applyTheme((await kv.get<ThemeId>('theme')) ?? 'color')
 applyGlass({ ...GLASS_DEFAULTS, ...(await kv.get<GlassValues>('glass')) })
 initGlass(document.getElementById('gl') as HTMLCanvasElement)

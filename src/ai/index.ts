@@ -20,10 +20,12 @@ export const status = (text: string) => dispatchEvent(new CustomEvent('ai-status
 export function waitOf(r: { headers: { get(k: string): string | null } }, j: any, msg: string) {
   const h = Number(r.headers.get('retry-after'))
   if (h) return h * 1000
+  const reset = Number(r.headers.get('x-ratelimit-reset'))   // OpenRouter: Zeitpunkt in ms
+  if (reset > 1e12) return Math.max(0, reset - Date.now())
   const delay = JSON.stringify(j?.error?.details ?? '').match(/"retryDelay":"([\d.]+)s"/)
   if (delay) return +delay[1] * 1000
   const t = msg.match(/(?:try again|retry) in ((?:[\d.]+(?:h|ms|m|s))+)/i)?.[1]
-  if (!t) return 0
+  if (!t) return /per.?day|daily/i.test(msg) ? 3_600_000 : 0   // Tageslimit ohne Zeitangabe: stündlich neu probieren
   let ms = 0
   for (const [, n, u] of t.matchAll(/([\d.]+)(h|ms|m|s)/g)) ms += +n * { h: 3_600_000, m: 60_000, s: 1000, ms: 1 }[u as 'h']
   return ms
@@ -43,6 +45,8 @@ async function post(label: string, url: string, headers: Record<string, string>,
     if (r.ok) return j
     const msg = `${r.status} ${j.error?.message ?? (typeof j.error === 'string' ? j.error : '')} ${j.message ?? j.detail ?? ''}`.replace(/\s+/g, ' ').trim()   // Mistral & Co. melden den Grund unter message/detail
     // 429 trotz Warten: vermutlich Tageskontingent ohne Zeitangabe – 30 Min. Ruhe für diesen Anbieter
+    // Limit 0: dieses Modell ist im Gratis-Tarif gar nicht freigegeben – einen Tag lang überspringen
+    if (r.status === 429 && (/limit: 0\b/.test(msg) || r.headers.get('x-ratelimit-limit-req-minute') === '0')) throw new AiError(429, 'im Gratis-Tarif nicht freigegeben (Limit 0)', Date.now() + 86_400_000)
     if (r.status !== 429 || attempt >= 3) throw new AiError(r.status, msg, r.status === 429 ? Date.now() + 30 * 60_000 : 0)
     const said = waitOf(r, j, msg)
     // Langes Limit (Minuten bis Stunden = Tageskontingent): nicht warten, der nächste Anbieter soll übernehmen
@@ -86,12 +90,13 @@ async function openAi(label: string, url: string, key: string, model: string, { 
 async function gemini(model: string, key: string, { system, prompt, json }: AiRequest) {
   // Kurzes Nachdenken: Sortieren braucht kein langes Grübeln, spart viel Zeit (sonst bis zu Minuten pro Anfrage)
   const think = (m: string) => m.startsWith('gemini-2.5') ? { thinkingBudget: 0 } : m.startsWith('gemini-3') ? { thinkingLevel: 'low' } : undefined
-  const req = (m: string, fast = true) => post(`Gemini · ${m}`, `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`,
+  // Gemma-Modelle (großes Gratis-Kontingent) kennen weder Systemanweisung noch JSON-Modus: Anweisung vor den Text
+  const req = (m: string, fast = true, gemma = m.startsWith('gemma')) => post(`Gemini · ${m}`, `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`,
     { 'x-goog-api-key': key }, {
-      systemInstruction: { parts: [{ text: system }] },
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      ...(gemma ? {} : { systemInstruction: { parts: [{ text: system }] } }),
+      contents: [{ role: 'user', parts: [{ text: gemma ? `${system}\n\n${prompt}` : prompt }] }],
       generationConfig: {
-        temperature: .4, ...(json ? { responseMimeType: 'application/json' } : {}),
+        temperature: .4, ...(json && !gemma ? { responseMimeType: 'application/json' } : {}),
         ...(fast && think(m) ? { thinkingConfig: think(m) } : {}),
       },
     })
@@ -115,12 +120,43 @@ async function gemini(model: string, key: string, { system, prompt, json }: AiRe
   return text as string
 }
 
+const GROQ = 'https://api.groq.com/openai/v1/chat/completions'
+// Keine Chat-Modelle (Sprache, Bilder, Einbettungen, Filter …)
+const NO_CHAT = /embed|whisper|tts|guard|moderation|image|imagen|veo|audio|speech|transcri|ocr|live|robotics|computer-use|aqa|lyria|playai|orpheus|native|banana/i
+
+/** Alle Chat-Modelle, die der Schlüssel beim Anbieter nutzen kann (laut dessen Modell-Liste). url leer = Gemini. Fehler → leere Liste. */
+async function listModels(url: string, key: string): Promise<string[]> {
+  try {
+    if (!url) {
+      const j = await (await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000', { headers: { 'x-goog-api-key': key }, signal: AbortSignal.timeout(15_000) })).json()
+      return (j.models ?? []).filter((m: any) => m.supportedGenerationMethods?.includes('generateContent'))
+        .map((m: any) => (m.name as string).replace('models/', '')).filter((id: string) => /^(gemini|gemma)/.test(id) && !NO_CHAT.test(id))
+    }
+    const j = await (await fetch(url.replace(/\/chat\/completions$/, '/models'), { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(15_000) })).json()
+    const ids: string[] = (j.data ?? []).map((m: any) => m.id).filter((id: string) => id && !NO_CHAT.test(id))
+    return url.includes('openrouter.ai') ? ids.filter(id => id.endsWith(':free') || id === 'openrouter/free') : ids   // OpenRouter: nur Gratis-Modelle
+  } catch { return [] }
+}
+/** Eigene Reihenfolge behalten, nicht mehr angebotene streichen, neue hinten anfügen (große „pro“-Modelle zuletzt: langsamer, knapper). */
+export const mergeModels = (cur: string[], found: string[]) => !found.length ? cur
+  : [...cur.filter(m => found.includes(m)), ...found.filter(m => !cur.includes(m)).sort((a, b) => +/pro/.test(a) - +/pro/.test(b))]
+
+/** Bei jedem Anbieter mit Schlüssel alle verfügbaren Modelle eintragen. */
+export async function refreshModels() {
+  const [gk, gm, qk, qm, extra] = await Promise.all([kv.get<string>('geminiKey'), kv.get<string>('geminiModel'), kv.get<string>('groqKey'), kv.get<string>('groqModel'), kv.get<ExtraAi[]>('aiExtra')])
+  if (gk) await kv.set('geminiModel', mergeModels(models(gm, AI_DEFAULTS.geminiModel), await listModels('', gk)).join(', '))
+  if (qk) await kv.set('groqModel', mergeModels(models(qm, AI_DEFAULTS.groqModel), await listModels(GROQ, qk)).join(', '))
+  if (extra?.length) await kv.set('aiExtra', await Promise.all(extra.map(async x =>
+    x.key && x.url ? { ...x, model: mergeModels(models(x.model, ''), await listModels(x.url, x.key)).join(', ') } : x)))
+  await kv.set('modelsAt', Date.now())
+}
+
 /** Alle eingetragenen Anbieter × Modelle in Reihenfolge: Gemini, Groq, dann die weiteren. */
 async function providers(): Promise<Provider[]> {
   const [gk, gm, qk, qm, extra] = await Promise.all([kv.get<string>('geminiKey'), kv.get<string>('geminiModel'), kv.get<string>('groqKey'), kv.get<string>('groqModel'), kv.get<ExtraAi[]>('aiExtra')])
   const out: Provider[] = []
   if (gk) for (const m of models(gm, AI_DEFAULTS.geminiModel)) out.push({ name: `Gemini · ${m}`, complete: r => gemini(m, gk, r) })
-  if (qk) for (const m of models(qm, AI_DEFAULTS.groqModel)) out.push({ name: `Groq · ${m}`, complete: r => openAi(`Groq · ${m}`, 'https://api.groq.com/openai/v1/chat/completions', qk, m, r) })
+  if (qk) for (const m of models(qm, AI_DEFAULTS.groqModel)) out.push({ name: `Groq · ${m}`, complete: r => openAi(`Groq · ${m}`, GROQ, qk, m, r) })
   for (const x of extra ?? []) if (x.key && x.url && x.model) for (const m of models(x.model, '')) {
     const name = `${x.name} · ${m}`
     out.push({ name, complete: r => openAi(name, x.url, x.key, m, r) })

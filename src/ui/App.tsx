@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { db, kv, type Playlist, type Profile } from '../data/db'
 import { syncPlaylists, syncTracks } from '../data/sync'
-import { AI_DEFAULTS, AI_PRESETS, hasAi, testAi, type ExtraAi } from '../ai'
+import { AI_DEFAULTS, AI_PRESETS, hasAi, refreshModels, testAi, type ExtraAi } from '../ai'
 import { buildProfiles } from '../features/profiles'
 import { getExcluded, getNoLearn, setExcluded, setNoLearn } from '../features/suggest'
 import { clearPause, NotLoggedIn, RateLimited } from '../spotify/api'
@@ -322,16 +322,20 @@ function AiKeys({ onSaved }: { onSaved: () => void }) {
   const [v, setV] = useState<Record<string, string>>({})
   const [extra, setExtra] = useState<ExtraAi[]>([])
   const [test, setTest] = useState<Record<string, string>>({})
-  const [saved, setSaved] = useState(false)
-  useEffect(() => {
+  const [saved, setSaved] = useState('')
+  const load = () => {
     Promise.all(fields.map(async ([k]) => [k, (await kv.get<string>(k)) ?? AI_DEFAULTS[k as keyof typeof AI_DEFAULTS] ?? ''] as const))
       .then(e => setV(Object.fromEntries(e)))
     kv.get<ExtraAi[]>('aiExtra').then(x => setExtra(x ?? []))
-  }, [])
+  }
+  useEffect(load, [])
   const save = async () => {
     for (const [k] of fields) await kv.set(k, (v[k] ?? '').trim())
     await kv.set('aiExtra', extra.map(x => ({ ...x, url: x.url.trim(), key: x.key.trim(), model: x.model.trim() })))
-    setSaved(true); setTimeout(() => setSaved(false), 1500)
+    setSaved('Modelle werden eingetragen …')
+    await refreshModels()   // alle Modelle, die die Schlüssel nutzen können
+    load()
+    setSaved('Gespeichert ✓'); setTimeout(() => setSaved(''), 1500)
     onSaved()
   }
   const upd = (id: string, patch: Partial<ExtraAi>) => setExtra(xs => xs.map(x => x.id === id ? { ...x, ...patch } : x))
@@ -346,7 +350,7 @@ function AiKeys({ onSaved }: { onSaved: () => void }) {
   </div>
   return <section className="panel glass">
     <h2>KI</h2>
-    <p className="cap left">Die App fragt die Anbieter der Reihe nach; ist einer am Limit, übernimmt der nächste. Bei Gemini und Groq hat jedes Modell sein eigenes Kontingent – mehrere Modelle eintragen lohnt sich.</p>
+    <p className="cap left">Die App fragt die Anbieter der Reihe nach; ist einer am Limit, übernimmt der nächste. Meist hat jedes Modell sein eigenes Kontingent. Beim Speichern (und einmal täglich) trägt die App alle Modelle ein, die Ihre Schlüssel nutzen können; nicht freigegebene überspringt sie von selbst.</p>
     {fields.map(([k, label, type]) => <div key={k}>{input(k, label, v[k] ?? '', x => setV({ ...v, [k]: x }), type)}</div>)}
     {extra.map(x => <div key={x.id} className="extra-ai">
       <b>{x.name}</b>
@@ -362,7 +366,7 @@ function AiKeys({ onSaved }: { onSaved: () => void }) {
     <span className="k">Weiteren Anbieter hinzufügen</span>
     <div className="actions">{AI_PRESETS.map(p => <button key={p.name} className="pill glass mini"
       onClick={() => setExtra(xs => [...xs, { ...p, id: crypto.randomUUID(), key: '' }])}>+ {p.name}</button>)}</div>
-    <div className="actions"><button className="pill glass hot" onClick={save}>{saved ? 'Gespeichert ✓' : 'Speichern'}</button></div>
+    <div className="actions"><button className="pill glass hot" onClick={save}>{saved || 'Speichern'}</button></div>
   </section>
 }
 
