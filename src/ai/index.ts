@@ -47,6 +47,8 @@ async function post(label: string, url: string, headers: Record<string, string>,
     // 429 trotz Warten: vermutlich Tageskontingent ohne Zeitangabe – 30 Min. Ruhe für diesen Anbieter
     // Limit 0: dieses Modell ist im Gratis-Tarif gar nicht freigegeben – einen Tag lang überspringen
     if (r.status === 429 && (/limit: 0\b/.test(msg) || r.headers.get('x-ratelimit-limit-req-minute') === '0')) throw new AiError(429, 'im Gratis-Tarif nicht freigegeben (Limit 0)', Date.now() + 86_400_000)
+    // Modell braucht ein Abo, fehlt oder ist gesperrt: einen Tag überspringen statt bei jeder Anfrage erneut
+    if ([401, 402, 403, 404].includes(r.status) || /subscription|paid|upgrade|billing|credits/i.test(msg)) throw new AiError(r.status, msg, Date.now() + 86_400_000)
     if (r.status !== 429 || attempt >= 3) throw new AiError(r.status, msg, r.status === 429 ? Date.now() + 30 * 60_000 : 0)
     const said = waitOf(r, j, msg)
     // Langes Limit (Minuten bis Stunden = Tageskontingent): nicht warten, der nächste Anbieter soll übernehmen
@@ -149,6 +151,7 @@ export async function refreshModels() {
   if (extra?.length) await kv.set('aiExtra', await Promise.all(extra.map(async x =>
     x.key && x.url ? { ...x, model: mergeModels(models(x.model, ''), await listModels(x.url, x.key)).join(', ') } : x)))
   await kv.set('modelsAt', Date.now())
+  health.clear()   // neue Schlüssel/Modelle: Sperren neu prüfen
 }
 
 /** Alle eingetragenen Anbieter × Modelle in Reihenfolge: Gemini, Groq, dann die weiteren. */
