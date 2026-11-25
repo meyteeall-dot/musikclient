@@ -31,11 +31,13 @@ export async function resetTuning() { await kv.del('weights'); await kv.del('sou
 /** Selbstständig nachjustieren: neue Einstellungen nur übernehmen, wenn sie auf der Prüf-Hälfte spürbar besser treffen. */
 export async function autoTune(onProgress?: (text: string) => void) {
   const r = await optimizeAll(onProgress)
-  const saved = r.after.test >= r.before.test + .003   // mindestens 0,3 Prozentpunkte – darunter ist es Zufall
+  const saved = realGain(r)
   if (saved) await saveTuning(r.weights, r.sound, r.bias)
   await kv.set('autoTune', { at: Date.now(), before: r.before.test, after: r.after.test, saved })
   return r
 }
+/** Echte Verbesserung statt Zufall: auf der Prüf-Hälfte mindestens 1 Prozentpunkt und mindestens 6 Songs mehr getroffen. */
+export const realGain = (r: Optimized) => { const g = r.after.test - r.before.test; return g >= .01 && g * r.n / 2 >= 6 }
 export interface AutoTune { at: number; before: number; after: number; saved: boolean }
 export const lastAutoTune = () => kv.get<AutoTune>('autoTune')
 export const getBias = async () => (await kv.get<Record<string, number>>('bias')) ?? {}

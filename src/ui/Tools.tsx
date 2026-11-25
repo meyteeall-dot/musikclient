@@ -4,7 +4,7 @@ import { db, kv } from '../data/db'
 import { ask, clearChat, getChat, type Msg } from '../features/chat'
 import { getNotes, setNote } from '../features/notes'
 import { SIGNALS, type Signal, type Weights } from '../features/suggest'
-import { autoTune, getBias, getSoundParams, getWeights, lastAutoTune, optimizeAll, resetTuning, saveTuning, type AutoTune, type Optimized } from '../features/weights'
+import { autoTune, getBias, getSoundParams, getWeights, lastAutoTune, optimizeAll, realGain, resetTuning, saveTuning, type AutoTune, type Optimized } from '../features/weights'
 import { syncStyles } from '../features/style'
 import { DEFAULT_SOUND, KEYS, type SoundParams } from '../features/sound'
 import { aiHealth, hasAi } from '../ai'
@@ -93,7 +93,7 @@ function AccuracyPanel({ onError }: { onError: (m: string) => void }) {
       }
       if (t.n >= 20) {   // nach dem Endlos-Lauf die Punkte selbst nachjustieren
         const r = await autoTune(x => setTune(`Stimmt die Punkte selbst nach: ${x}`))
-        setTune(`Selbst nachjustiert: ${Math.round(r.before.test * 100)} % → ${Math.round(r.after.test * 100)} % (Prüf-Hälfte) · ${r.after.test >= r.before.test + .003 ? 'übernommen' : 'kein echter Gewinn – nichts geändert'}`)
+        setTune(`Selbst nachjustiert: ${Math.round(r.before.test * 100)} % → ${Math.round(r.after.test * 100)} % (Prüf-Hälfte) · ${realGain(r) ? 'übernommen' : 'kein echter Gewinn – nichts geändert'}`)
       }
     } catch (e) { setErr((e as Error).message); onError((e as Error).message) }
     finally { lock?.release?.(); setProg(null); setWait(0); getLessons().then(l => setLearned(l.length)) }
@@ -297,7 +297,7 @@ function WeightsPanel({ onError }: { onError: (m: string) => void }) {
         <div><b>{p(res.before.test)}</b><small>bisher (Prüf-Hälfte)</small></div>
         <div><b>{p(res.after.test)}</b><small>abgestimmt (Prüf-Hälfte)</small></div>
       </div>
-      <p className="cap left">{res.n} Songs · Lern-Hälfte {p(res.before.train)} → {p(res.after.train)} · {gain > .005 ? `echte Verbesserung um ${Math.round(gain * 100)} Prozentpunkte` : 'keine echte Verbesserung – bisherige Einstellungen behalten'}</p>
+      <p className="cap left">{res.n} Songs · Lern-Hälfte {p(res.before.train)} → {p(res.after.train)} · {realGain(res) ? `echte Verbesserung um ${Math.round(gain * 100)} Prozentpunkte` : 'keine echte Verbesserung – bisherige Einstellungen behalten'}</p>
     </>}
     {(res || tuned) && <details className="misses"><summary>Einstellungen im Detail</summary>
       <table className="signals"><thead><tr><th>Fakt</th><th>aktuell</th>{res && <th>neu</th>}</tr></thead>
@@ -319,7 +319,7 @@ function WeightsPanel({ onError }: { onError: (m: string) => void }) {
     </details>}
     <div className="actions">
       <button className="pill glass hot" disabled={!!busy} onClick={run}>{busy ? 'Stimme ab …' : res ? 'Erneut abstimmen' : 'Abstimmen'}</button>
-      {res && gain > .005 && <button className="pill glass hot" disabled={saved} onClick={apply}>{saved ? 'Übernommen ✓' : 'Übernehmen'}</button>}
+      {res && realGain(res) && <button className="pill glass hot" disabled={saved} onClick={apply}>{saved ? 'Übernommen ✓' : 'Übernehmen'}</button>}
       {tuned && <button className="pill glass" disabled={!!busy} onClick={reset}>Zurücksetzen</button>}
     </div>
   </section>
