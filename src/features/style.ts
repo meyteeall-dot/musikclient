@@ -16,14 +16,15 @@ function vocab(styles: Map<string, Style>, n: number) {
   return [...c].sort((a, b) => b[1] - a[1]).slice(0, n).map(([g]) => g)
 }
 
-/** Steckbriefe für alle Songs der Sammlung (auch Sammel-Playlists) und extra (z. B. Inbox), die noch keinen haben. Gibt die Zahl der KI-Anfragen zurück. */
+/** Steckbriefe für alle Songs der Sammlung (auch Sammel-Playlists) und extra (z. B. Inbox), die noch keinen haben. Jeder fertige Stapel wird sofort gespeichert. Gibt die Zahl der KI-Anfragen zurück. */
 export async function syncStyles(onProgress?: (done: number, todo: number) => void, extra: Track[] = [], maxBatches = Infinity) {
   const d = await db
   const styles = await getStyles()
-  const todo = [...new Map([...(await d.getAll('tracks')).flatMap(t => t.tracks), ...extra].filter(t => !styles.has(t.id)).map(t => [t.id, t])).values()]
+  const songs = [...new Map([...(await d.getAll('tracks')).flatMap(t => t.tracks), ...extra].map(t => [t.id, t])).values()]
+  const todo = songs.filter(t => !styles.has(t.id))
   const batches = Math.min(maxBatches, Math.ceil(todo.length / BATCH))
   for (let b = 0; b < batches; b++) {
-    onProgress?.(b, batches)
+    onProgress?.(songs.length - todo.length + b * BATCH, songs.length)   // Gesamtstand in Songs: Fertiges aus früheren Abgleichen zählt mit
     const part = todo.slice(b * BATCH, (b + 1) * BATCH)
     const known = vocab(styles, 120)
     const { data } = await completeJson<{ s: { i: number; g?: unknown; l?: unknown }[] }>({

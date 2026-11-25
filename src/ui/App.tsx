@@ -84,7 +84,7 @@ export function App() {
     // Steckbriefe im Hintergrund, höchstens 10 KI-Anfragen je Abgleich: blockiert den Abgleich-Knopf nicht; fertige Stapel bleiben gespeichert
     if (!styling.current && await hasAi()) {
       styling.current = true
-      syncStyles((i, all) => all && setStatus(`Steckbriefe ${i}/${all}`), [], 10)
+      syncStyles((i, all) => all && setStatus(`Steckbriefe ${i}/${all} Songs`), [], 10)
         .then(n => { if (n) setStatus('Steckbriefe: Stapel fertig, Rest beim nächsten Abgleich') }, e => { setStatus('Steckbriefe pausiert (KI-Limit)'); console.warn('Steckbriefe:', e) })
         .finally(() => { styling.current = false })
     }
