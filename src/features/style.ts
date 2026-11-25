@@ -6,6 +6,7 @@ import { db, kv, type Track } from '../data/db'
 export interface Style { g: string[]; l: string }
 const KEY = 'styles'   // shortcut: alle Steckbriefe in einem kv-Eintrag (~60 Byte je Song); ab ~20 000 Songs in einen eigenen Speicher umziehen
 const BATCH = 50
+const PARALLEL = 4   // gleichzeitige KI-Anfragen
 
 export const getStyles = async () => new Map(Object.entries((await kv.get<Record<string, Style>>(KEY)) ?? {}))
 
@@ -23,8 +24,8 @@ export async function syncStyles(onProgress?: (done: number, todo: number) => vo
   const songs = [...new Map([...(await d.getAll('tracks')).flatMap(t => t.tracks), ...extra].map(t => [t.id, t])).values()]
   const todo = songs.filter(t => !styles.has(t.id))
   const batches = Math.min(maxBatches, Math.ceil(todo.length / BATCH))
-  for (let b = 0; b < batches; b++) {
-    onProgress?.(songs.length - todo.length + b * BATCH, songs.length)   // Gesamtstand in Songs: Fertiges aus früheren Abgleichen zählt mit
+  let next = 0, done = 0
+  const one = async (b: number) => {
     const part = todo.slice(b * BATCH, (b + 1) * BATCH)
     const known = vocab(styles, 120)
     const { data } = await completeJson<{ s: { i: number; g?: unknown; l?: unknown }[] }>({
@@ -44,7 +45,14 @@ ${part.map((t, i) => `${i}: ${t.artists.join(', ')} – ${t.name}${t.year ? ` ($
     }
     for (const t of part) if (!styles.has(t.id)) styles.set(t.id, { g: [], l: '' })   // von der KI ausgelassen: nicht endlos neu fragen
     await kv.set(KEY, Object.fromEntries(styles))
+    onProgress?.(Math.min(songs.length, songs.length - todo.length + ++done * BATCH), songs.length)
   }
+  // Mehrere Stapel gleichzeitig, jeder bei einem anderen Modell (complete verteilt); ein Strang hört auf, wenn alle KIs am Limit sind
+  const worker = async () => { while (next < batches) await one(next++) }
+  onProgress?.(songs.length - todo.length, songs.length)   // Gesamtstand in Songs: Fertiges aus früheren Abgleichen zählt mit
+  const res = await Promise.allSettled(Array.from({ length: Math.min(PARALLEL, batches) }, worker))
+  const failed = res.find(r => r.status === 'rejected')
+  if (failed && !done) throw (failed as PromiseRejectedResult).reason
   return batches
 }
 

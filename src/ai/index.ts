@@ -167,6 +167,7 @@ export async function hasAi() { return (await providers()).length > 0 }
 /** parse: prüft die Antwort; ist sie unbrauchbar, kommt der nächste Anbieter dran. */
 // Gesperrte Anbieter (langes Limit) werden bis zum Ablauf übersprungen statt bei jeder Anfrage erneut probiert
 const health = new Map<string, { until: number; error: string }>()
+const inUse = new Set<string>()
 /** Zustand der Anbieter für Anzeigen: gesperrt bis (0 = frei) und letzter Fehler. */
 export const aiHealth = () => known.map(name => { const h = health.get(name); return { name, until: h && h.until > Date.now() ? h.until : 0, error: h?.error ?? '' } })
 
@@ -175,9 +176,11 @@ export async function complete<T = string>(r: AiRequest, parse: (text: string) =
   let errors: string[] = []
   for (let round = 0; round < 3; round++) {
     errors = []
-    for (const p of ps) {
+    // Modelle, die gerade für eine andere Anfrage arbeiten, ans Ende: parallele Anfragen verteilen sich so auf verschiedene Modelle
+    for (const p of [...ps.filter(p => !inUse.has(p.name)), ...ps.filter(p => inUse.has(p.name))]) {
       const h = health.get(p.name)
       if (h && h.until > Date.now()) { errors.push(`${p.name}: ${h.error}`); continue }
+      inUse.add(p.name)
       try {
         const data = parse(await p.complete(r))
         health.delete(p.name)
@@ -187,7 +190,7 @@ export async function complete<T = string>(r: AiRequest, parse: (text: string) =
         errors.push(`${p.name}: ${m}`)
         health.set(p.name, { until: e instanceof AiError ? e.until : 0, error: m })
         status(`${p.name}: ${m.slice(0, 60)} – nächstes Modell`)
-      }
+      } finally { inUse.delete(p.name) }
     }
     // Alle am Limit: auf das erste, das binnen einer Minute wieder frei wird, warten – sonst aufgeben
     const free = Math.min(...ps.map(p => health.get(p.name)?.until ?? 0).filter(u => u > Date.now()))
