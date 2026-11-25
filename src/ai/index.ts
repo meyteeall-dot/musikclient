@@ -1,9 +1,10 @@
-/* Gemeinsame KI-Schicht: Anbieter der Reihe nach; meldet einer einen Fehler oder ein Limit, übernimmt der nächste.
-   Neuer Anbieter = weiteres Objekt mit available()/complete() in PROVIDERS. */
+/* Gemeinsame KI-Schicht: Anbieter und Modelle der Reihe nach; meldet einer einen Fehler oder ein Limit, übernimmt der nächste.
+   Jedes Modell hat beim Anbieter sein eigenes Kontingent – deshalb zählt jedes Modell als eigener Eintrag.
+   Weitere Anbieter mit OpenAI-kompatibler Schnittstelle (OpenRouter, Cerebras, Mistral …) trägt man unter Optionen ein. */
 import { kv } from '../data/db'
 
 export interface AiRequest { system: string; prompt: string; json?: boolean }
-interface Provider { name: string; available(): Promise<boolean>; complete(r: AiRequest): Promise<string> }
+interface Provider { name: string; complete(r: AiRequest): Promise<string> }
 
 export const AI_DEFAULTS = { geminiModel: 'gemini-3.8-flash', groqModel: 'openai/gpt-oss-120b' }
 
@@ -51,78 +52,94 @@ async function post(label: string, url: string, headers: Record<string, string>,
   }
 }
 
-const gemini: Provider = {
-  name: 'Gemini',
-  available: async () => !!(await kv.get('geminiKey')),
-  async complete({ system, prompt, json }) {
-    const model = (await kv.get<string>('geminiModel')) || AI_DEFAULTS.geminiModel
-    const key = (await kv.get<string>('geminiKey'))!
-    // Kurzes Nachdenken: Sortieren braucht kein langes Grübeln, spart viel Zeit (sonst bis zu Minuten pro Anfrage)
-    const think = (m: string) => m.startsWith('gemini-2.5') ? { thinkingBudget: 0 } : m.startsWith('gemini-3') ? { thinkingLevel: 'low' } : undefined
-    const req = (m: string, fast = true) => post('Gemini', `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`,
-      { 'x-goog-api-key': key }, {
-        systemInstruction: { parts: [{ text: system }] },
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: .4, ...(json ? { responseMimeType: 'application/json' } : {}),
-          ...(fast && think(m) ? { thinkingConfig: think(m) } : {}),
-        },
-      })
-    let j
-    try {
-      try { j = await req(model) }
-      catch (e) {   // Modell kennt die Denk-Einstellung nicht: ohne sie erneut
-        if (!(e instanceof AiError && e.status === 400 && /think/i.test(e.message))) throw e
-        j = await req(model, false)
-      }
-    } catch (e) {
-      // Modell abgeschaltet: Google nennt den Nachfolger in der Fehlermeldung – übernehmen und merken
-      const next = e instanceof AiError && e.status === 404 && e.message.match(/use models\/([\w.-]+)/)?.[1]
-      if (!next || next === model) throw e
-      j = await req(next)
-      await kv.set('geminiModel', next)
+/** Weitere Anbieter (OpenAI-kompatibel), unter Optionen gepflegt. */
+export interface ExtraAi { id: string; name: string; url: string; key: string; model: string }
+export const AI_PRESETS: Omit<ExtraAi, 'id' | 'key'>[] = [
+  { name: 'OpenRouter', url: 'https://openrouter.ai/api/v1/chat/completions', model: '' },   // Gratis-Modelle enden auf „:free“
+  { name: 'Cerebras', url: 'https://api.cerebras.ai/v1/chat/completions', model: 'gpt-oss-120b' },
+  { name: 'Mistral', url: 'https://api.mistral.ai/v1/chat/completions', model: 'mistral-small-latest' },
+  { name: 'Eigener Anbieter', url: '', model: '' },
+]
+
+const models = (v: string | undefined, fallback: string) => (v || fallback).split(',').map(x => x.trim()).filter(Boolean)
+
+/** OpenAI-kompatible Chat-Schnittstelle (Groq, OpenRouter, Cerebras, Mistral …). */
+async function openAi(label: string, url: string, key: string, model: string, { system, prompt, json }: AiRequest) {
+  const body = (fmt: boolean) => ({
+    model, temperature: .4,
+    ...(model.includes('gpt-oss') ? { reasoning_effort: 'low' } : {}),   // Denk-Tokens zählen ins Minutenlimit
+    messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }],
+    ...(json && fmt ? { response_format: { type: 'json_object' } } : {}),
+  })
+  let j
+  try { j = await post(label, url, { Authorization: `Bearer ${key}` }, body(true)) }
+  catch (e) {   // manche Modelle kennen den JSON-Modus nicht: ohne erneut, die Antwort wird ohnehin auf JSON geprüft
+    if (!(e instanceof AiError && e.status === 400 && /response_format|json/i.test(e.message))) throw e
+    j = await post(label, url, { Authorization: `Bearer ${key}` }, body(false))
+  }
+  const text = j.choices?.[0]?.message?.content
+  if (!text) throw new Error('leere Antwort')
+  return text as string
+}
+
+async function gemini(model: string, key: string, { system, prompt, json }: AiRequest) {
+  // Kurzes Nachdenken: Sortieren braucht kein langes Grübeln, spart viel Zeit (sonst bis zu Minuten pro Anfrage)
+  const think = (m: string) => m.startsWith('gemini-2.5') ? { thinkingBudget: 0 } : m.startsWith('gemini-3') ? { thinkingLevel: 'low' } : undefined
+  const req = (m: string, fast = true) => post(`Gemini · ${m}`, `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent`,
+    { 'x-goog-api-key': key }, {
+      systemInstruction: { parts: [{ text: system }] },
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: {
+        temperature: .4, ...(json ? { responseMimeType: 'application/json' } : {}),
+        ...(fast && think(m) ? { thinkingConfig: think(m) } : {}),
+      },
+    })
+  let j
+  try {
+    try { j = await req(model) }
+    catch (e) {   // Modell kennt die Denk-Einstellung nicht: ohne sie erneut
+      if (!(e instanceof AiError && e.status === 400 && /think/i.test(e.message))) throw e
+      j = await req(model, false)
     }
-    const text = j.candidates?.[0]?.content?.parts?.map((p: any) => p.text ?? '').join('')
-    if (!text) throw new Error('leere Antwort')
-    return text
-  },
+  } catch (e) {
+    // Modell abgeschaltet: Google nennt den Nachfolger in der Fehlermeldung – übernehmen und merken
+    const next = e instanceof AiError && e.status === 404 && e.message.match(/use models\/([\w.-]+)/)?.[1]
+    if (!next || next === model) throw e
+    j = await req(next)
+    const list = models(await kv.get<string>('geminiModel'), AI_DEFAULTS.geminiModel)
+    await kv.set('geminiModel', list.map(m => m === model ? next : m).join(', '))
+  }
+  const text = j.candidates?.[0]?.content?.parts?.map((p: any) => p.text ?? '').join('')
+  if (!text) throw new Error('leere Antwort')
+  return text as string
 }
 
-const groq: Provider = {
-  name: 'Groq',
-  available: async () => !!(await kv.get('groqKey')),
-  async complete({ system, prompt, json }) {
-    const model = (await kv.get<string>('groqModel')) || AI_DEFAULTS.groqModel
-    const j = await post('Groq', 'https://api.groq.com/openai/v1/chat/completions',
-      { Authorization: `Bearer ${await kv.get<string>('groqKey')}` }, {
-        model, temperature: .4,
-        ...(model.startsWith('openai/gpt-oss') ? { reasoning_effort: 'low' } : {}),   // Denk-Tokens zählen ins Minutenlimit
-        messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }],
-        ...(json ? { response_format: { type: 'json_object' } } : {}),
-      })
-    const text = j.choices?.[0]?.message?.content
-    if (!text) throw new Error('leere Antwort')
-    return text
-  },
+/** Alle eingetragenen Anbieter × Modelle in Reihenfolge: Gemini, Groq, dann die weiteren. */
+async function providers(): Promise<Provider[]> {
+  const [gk, gm, qk, qm, extra] = await Promise.all([kv.get<string>('geminiKey'), kv.get<string>('geminiModel'), kv.get<string>('groqKey'), kv.get<string>('groqModel'), kv.get<ExtraAi[]>('aiExtra')])
+  const out: Provider[] = []
+  if (gk) for (const m of models(gm, AI_DEFAULTS.geminiModel)) out.push({ name: `Gemini · ${m}`, complete: r => gemini(m, gk, r) })
+  if (qk) for (const m of models(qm, AI_DEFAULTS.groqModel)) out.push({ name: `Groq · ${m}`, complete: r => openAi(`Groq · ${m}`, 'https://api.groq.com/openai/v1/chat/completions', qk, m, r) })
+  for (const x of extra ?? []) if (x.key && x.url && x.model) for (const m of models(x.model, '')) {
+    const name = `${x.name} · ${m}`
+    out.push({ name, complete: r => openAi(name, x.url, x.key, m, r) })
+  }
+  known = out.map(p => p.name)
+  return out
 }
+let known: string[] = []
 
-const PROVIDERS = [gemini, groq]
-
-export async function hasAi() {
-  for (const p of PROVIDERS) if (await p.available()) return true
-  return false
-}
+export async function hasAi() { return (await providers()).length > 0 }
 
 /** parse: prüft die Antwort; ist sie unbrauchbar, kommt der nächste Anbieter dran. */
 // Gesperrte Anbieter (langes Limit) werden bis zum Ablauf übersprungen statt bei jeder Anfrage erneut probiert
 const health = new Map<string, { until: number; error: string }>()
 /** Zustand der Anbieter für Anzeigen: gesperrt bis (0 = frei) und letzter Fehler. */
-export const aiHealth = () => PROVIDERS.map(p => { const h = health.get(p.name); return { name: p.name, until: h && h.until > Date.now() ? h.until : 0, error: h?.error ?? '' } })
+export const aiHealth = () => known.map(name => { const h = health.get(name); return { name, until: h && h.until > Date.now() ? h.until : 0, error: h?.error ?? '' } })
 
 export async function complete<T = string>(r: AiRequest, parse: (text: string) => T = t => t as T) {
   const errors: string[] = []
-  for (const p of PROVIDERS) {
-    if (!(await p.available())) continue
+  for (const p of await providers()) {
     const h = health.get(p.name)
     if (h && h.until > Date.now()) { errors.push(`${p.name}: ${h.error}`); continue }
     try {
@@ -137,6 +154,16 @@ export async function complete<T = string>(r: AiRequest, parse: (text: string) =
     }
   }
   throw new Error(errors.length ? 'KI nicht erreichbar – ' + errors.join(' | ') : 'Kein KI-Schlüssel eingetragen')
+}
+
+/** Einen einzelnen Anbieter prüfen (Knopf „Testen“): klappt der Aufruf aus dem Browser, kommt lesbares JSON zurück? */
+export async function testAi(x: Pick<ExtraAi, 'name' | 'url' | 'key' | 'model'>) {
+  const t0 = Date.now()
+  const m = models(x.model, '')[0]
+  if (!x.url || !x.key || !m) throw new Error('Adresse, Schlüssel und Modell eintragen.')
+  const text = await openAi(`${x.name} · ${m}`, x.url, x.key, m, { system: 'Antworte ausschließlich mit JSON.', prompt: 'Gib {"ok": true} zurück.', json: true })
+  JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1))
+  return Date.now() - t0
 }
 
 export async function completeJson<T>(r: AiRequest): Promise<{ data: T; provider: string }> {

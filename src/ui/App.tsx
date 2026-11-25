@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { db, kv, type Playlist, type Profile } from '../data/db'
 import { syncPlaylists, syncTracks } from '../data/sync'
-import { AI_DEFAULTS, hasAi } from '../ai'
+import { AI_DEFAULTS, AI_PRESETS, hasAi, testAi, type ExtraAi } from '../ai'
 import { buildProfiles } from '../features/profiles'
 import { getExcluded, getNoLearn, setExcluded, setNoLearn } from '../features/suggest'
 import { clearPause, NotLoggedIn, RateLimited } from '../spotify/api'
@@ -312,31 +312,57 @@ function Look() {
   </section>
 }
 
-/** KI-Schlüssel und Modelle. Gemini zuerst, Groq springt bei Fehler oder Limit ein. */
+/** KI-Anbieter: Gemini und Groq (je mehrere Modelle möglich, jedes mit eigenem Kontingent) plus weitere OpenAI-kompatible.
+    Reihenfolge = Gemini-Modelle, Groq-Modelle, dann die weiteren; bei Fehler oder Limit übernimmt der nächste. */
 function AiKeys({ onSaved }: { onSaved: () => void }) {
   const fields = [
-    ['geminiKey', 'Gemini-Schlüssel', 'password'], ['geminiModel', 'Gemini-Modell', 'text'],
-    ['groqKey', 'Groq-Schlüssel (Ersatz)', 'password'], ['groqModel', 'Groq-Modell', 'text'],
+    ['geminiKey', 'Gemini-Schlüssel', 'password'], ['geminiModel', 'Gemini-Modelle (Komma-getrennt, der Reihe nach)', 'text'],
+    ['groqKey', 'Groq-Schlüssel', 'password'], ['groqModel', 'Groq-Modelle (Komma-getrennt)', 'text'],
   ] as const
   const [v, setV] = useState<Record<string, string>>({})
+  const [extra, setExtra] = useState<ExtraAi[]>([])
+  const [test, setTest] = useState<Record<string, string>>({})
   const [saved, setSaved] = useState(false)
   useEffect(() => {
     Promise.all(fields.map(async ([k]) => [k, (await kv.get<string>(k)) ?? AI_DEFAULTS[k as keyof typeof AI_DEFAULTS] ?? ''] as const))
       .then(e => setV(Object.fromEntries(e)))
+    kv.get<ExtraAi[]>('aiExtra').then(x => setExtra(x ?? []))
   }, [])
   const save = async () => {
     for (const [k] of fields) await kv.set(k, (v[k] ?? '').trim())
+    await kv.set('aiExtra', extra.map(x => ({ ...x, url: x.url.trim(), key: x.key.trim(), model: x.model.trim() })))
     setSaved(true); setTimeout(() => setSaved(false), 1500)
     onSaved()
   }
+  const upd = (id: string, patch: Partial<ExtraAi>) => setExtra(xs => xs.map(x => x.id === id ? { ...x, ...patch } : x))
+  const runTest = async (x: ExtraAi) => {
+    setTest(t => ({ ...t, [x.id]: 'teste …' }))
+    try { const ms = await testAi(x); setTest(t => ({ ...t, [x.id]: `✓ funktioniert (${(ms / 1000).toFixed(1)} s)` })) }
+    catch (e) { setTest(t => ({ ...t, [x.id]: `✕ ${(e as Error).message.slice(0, 160)}` })) }
+  }
+  const input = (id: string, label: string, value: string, on: (v: string) => void, type = 'text') => <div className="kfield">
+    <label className="k" htmlFor={id}>{label}</label>
+    <input id={id} type={type} className="field mono" value={value} onChange={e => on(e.target.value)} autoCapitalize="off" autoCorrect="off" spellCheck={false} autoComplete="off" />
+  </div>
   return <section className="panel glass">
     <h2>KI</h2>
-    {fields.map(([k, label, type]) => <div key={k} className="kfield">
-      <label className="k" htmlFor={k}>{label}</label>
-      <input id={k} type={type} className="field mono" value={v[k] ?? ''} onChange={e => setV({ ...v, [k]: e.target.value })}
-        autoCapitalize="off" autoCorrect="off" spellCheck={false} autoComplete="off" />
+    <p className="cap left">Die App fragt die Anbieter der Reihe nach; ist einer am Limit, übernimmt der nächste. Bei Gemini und Groq hat jedes Modell sein eigenes Kontingent – mehrere Modelle eintragen lohnt sich.</p>
+    {fields.map(([k, label, type]) => <div key={k}>{input(k, label, v[k] ?? '', x => setV({ ...v, [k]: x }), type)}</div>)}
+    {extra.map(x => <div key={x.id} className="extra-ai">
+      <b>{x.name}</b>
+      {(!AI_PRESETS.some(p => p.name === x.name && p.url) || !x.url) && input(`${x.id}-u`, 'Adresse (…/chat/completions)', x.url, u => upd(x.id, { url: u }))}
+      {input(`${x.id}-k`, 'Schlüssel', x.key, k => upd(x.id, { key: k }), 'password')}
+      {input(`${x.id}-m`, x.name === 'OpenRouter' ? 'Modelle (Gratis-Modelle enden auf :free, Komma-getrennt)' : 'Modelle (Komma-getrennt)', x.model, m => upd(x.id, { model: m }))}
+      {test[x.id] && <p className={'cap left' + (test[x.id].startsWith('✕') ? ' err' : '')}>{test[x.id]}</p>}
+      <div className="actions">
+        <button className="pill glass mini" onClick={() => runTest(x)}>Testen</button>
+        <button className="pill glass mini" onClick={() => setExtra(xs => xs.filter(y => y.id !== x.id))}>Entfernen</button>
+      </div>
     </div>)}
-    <div className="actions"><button className="pill glass" onClick={save}>{saved ? 'Gespeichert ✓' : 'Speichern'}</button></div>
+    <span className="k">Weiteren Anbieter hinzufügen</span>
+    <div className="actions">{AI_PRESETS.map(p => <button key={p.name} className="pill glass mini"
+      onClick={() => setExtra(xs => [...xs, { ...p, id: crypto.randomUUID(), key: '' }])}>+ {p.name}</button>)}</div>
+    <div className="actions"><button className="pill glass hot" onClick={save}>{saved ? 'Gespeichert ✓' : 'Speichern'}</button></div>
   </section>
 }
 
