@@ -32,12 +32,18 @@ async function overview() {
   const prof = new Map(profiles.map(p => [p.id, p])), tr = new Map(tracks.map(t => [t.id, t.tracks]))
   const lines = pls.filter(p => p.ownedByMe || p.collaborative).sort((a, b) => a.name.localeCompare(b.name)).map(p => {
     const t = tr.get(p.id) ?? [], pr = prof.get(p.id)
-    const gc = new Map<string, number>(), lc = new Map<string, number>()
-    for (const x of t) { const s = styles.get(x.id); s?.g.forEach(g => gc.set(g, (gc.get(g) ?? 0) + 1)); if (s?.l) lc.set(s.l, (lc.get(s.l) ?? 0) + 1) }
+    const gc = new Map<string, number>(), lc = new Map<string, number>(), mc = new Map<string, number>(), us: number[] = []
+    for (const x of t) {
+      const s = styles.get(x.id)
+      s?.g.forEach(g => gc.set(g, (gc.get(g) ?? 0) + 1)); s?.m?.forEach(m => mc.set(m, (mc.get(m) ?? 0) + 1))
+      if (s?.l) lc.set(s.l, (lc.get(s.l) ?? 0) + 1)
+      if (s?.u !== undefined) us.push(s.u)
+    }
     const top = (m: Map<string, number>, n: number) => [...m].sort((a, b) => b[1] - a[1]).slice(0, n).map(([k, v]) => `${k} ${Math.round(v / t.length * 100)}%`).join(', ')
     return [`• ${p.name} (${t.length} Songs${excluded.has(p.id) ? ', Vorschlagen aus' : ''}${noLearn.has(p.id) ? ', Lernen aus' : ''})`,
       gc.size ? `Genres: ${top(gc, 4)}` : pr?.genres.length ? `Genres: ${pr.genres.join(', ')}` : '',
-      lc.size ? `Sprachen: ${top(lc, 3)}` : '', pr?.mood ? `Stimmung: ${pr.mood}` : '', pr?.era ? `Epoche: ${pr.era}` : '',
+      lc.size ? `Sprachen: ${top(lc, 3)}` : '', mc.size ? `Stimmungen: ${top(mc, 4)}` : '',
+      us.length ? `Unterton Ø ${(us.reduce((a, b) => a + b, 0) / us.length).toFixed(1)} (−2 traurig … +2 euphorisch)` : '', pr?.mood ? `Stimmung: ${pr.mood}` : '', pr?.era ? `Epoche: ${pr.era}` : '',
       pr?.artists.length ? `Künstler: ${pr.artists.slice(0, 6).join(', ')}` : '', p.description ? `Spotify-Beschreibung: ${p.description}` : '',
       notes[p.id] ? `NOTIZ VON SIR: ${notes[p.id]}` : ''].filter(Boolean).join(' | ')
   })

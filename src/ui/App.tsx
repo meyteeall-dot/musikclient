@@ -416,7 +416,7 @@ function SoundStatus() {
     <h2>Klangdaten</h2>
     <p className="cap left">Tempo, Energie, Tanzbarkeit und Stimmung jedes Songs – damit vergleicht die App Songs nach echtem Klang. Quelle: ReccoBeats (kostenlos). Fehlende schätzt die KI; beim Abgleich sucht die App nach und nach andere Versionen mit echten Daten.</p>
     {st && <p className="cap left">{all ? `${st.echt} echt · ${st.schätzung} geschätzt · ${st.fehlt} offen (von ${all} Songs)` : 'Noch keine – kommt beim nächsten Abgleich.'}</p>}
-    <p className="cap left"><b>Steckbriefe</b> (Genre und Sprache je Song, einmalig von der KI, danach rechnen die Punkte ohne KI): {sty ? `${sty.done} von ${sty.all} Songs` : '…'}{sty && sty.done < sty.all ? ' – der Rest kommt bei den nächsten Abgleichen.' : ''}</p>
+    <p className="cap left"><b>Steckbriefe</b> (Genre, Sprache, Stimmung und Unterton je Song, einmalig von der KI, danach rechnen die Punkte ohne KI): {sty ? `${sty.done} von ${sty.all} Songs` : '…'}{sty && sty.done < sty.all ? ' – der Rest kommt bei den nächsten Abgleichen.' : ''}</p>
   </section>
 }
 

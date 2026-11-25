@@ -11,7 +11,7 @@ import { DEFAULT_SOUND, soundOf, soundVotes, type SoundParams } from './sound'
 
 export interface Suggestion { playlist: Playlist; reason: string }
 /** Bausteine der Punkte – einzeln abschaltbar für die Signal-Analyse der Trefferquote. */
-export const SIGNALS = { artist: 'Künstler schon drin', sound: 'Klang', chosen: 'Deine Hinzufügungen', rejected: '✕ Ablehnungen', lessons: 'Merksätze', genre: 'Genre (Steckbrief)', lang: 'Sprache (Steckbrief)', era: 'Epoche', general: 'Oft gewählte Playlists', bias: 'Magnet-Bremse' } as const
+export const SIGNALS = { artist: 'Künstler schon drin', sound: 'Klang', chosen: 'Deine Hinzufügungen', rejected: '✕ Ablehnungen', lessons: 'Merksätze', genre: 'Genre (Steckbrief)', lang: 'Sprache (Steckbrief)', mood: 'Stimmung (Steckbrief)', tone: 'Unterton (Steckbrief)', era: 'Epoche', general: 'Oft gewählte Playlists', bias: 'Magnet-Bremse' } as const
 export type Signal = keyof typeof SIGNALS
 export type Parts = Record<Signal, number>
 
@@ -45,7 +45,7 @@ export function score(song: Track, tracks: Track[], prof: Profile | undefined, c
   const lr = same.filter(l => l.right.includes(playlistId)).length, lw = same.filter(l => l.wrong === playlistId).length
   const parts: Parts = {
     artist: Math.min(k, 5) * 2, chosen: w * 3, rejected: -no * 4, lessons: Math.min(lr, 3) * 2 - Math.min(lw, 3) * 2,
-    era: era ? 2 : 0, general: Math.min(mine.length, 6) * .25, sound: 0, bias: 0, genre: 0, lang: 0,   // Klang, Steckbrief und Magnet-Bremse kommen in compute() dazu
+    era: era ? 2 : 0, general: Math.min(mine.length, 6) * .25, sound: 0, bias: 0, genre: 0, lang: 0, mood: 0, tone: 0,   // Klang, Steckbrief und Magnet-Bremse kommen in compute() dazu
   }
   return { k, w, era, parts, score: sum(parts) }
 }
@@ -135,8 +135,8 @@ async function compute(song: Track, opts: { test?: boolean; local?: boolean; lib
     }
     const s = score(song, tracks, profOf.get(p.id), choices, p.id, lessons), kl = votes.get(p.id) ?? 0
     const m = styleMatch(st, tracks, lib.styles)
-    // Klang: bis zu 8 Punkte; Genre: bis zu 6; Sprache: −2 (keiner spricht so) bis +2 (alle); Magnet-Bremse: gelernter Ausgleich je Playlist
-    const parts = { ...s.parts, sound: kl * 8, genre: m.genre * 6, lang: (m.lang - .5) * 4, bias: lib.bias[p.id] ?? 0 }
+    // Klang bis 8 Punkte; Genre und Stimmung bis 6; Sprache und Unterton −2 (passt zu keinem) bis +2 (zu allen); Magnet-Bremse: gelernter Ausgleich je Playlist
+    const parts = { ...s.parts, sound: kl * 8, genre: m.genre * 6, lang: (m.lang - .5) * 4, mood: m.mood * 6, tone: (m.tone - .5) * 4, bias: lib.bias[p.id] ?? 0 }
     cands.push({ p, prof: profOf.get(p.id), tracks, ...s, kl, parts, score: sum(parts, undefined, lib.weights) })
   }
   cands.sort((a, b) => b.score - a.score)
