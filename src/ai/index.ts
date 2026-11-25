@@ -6,7 +6,8 @@ import { kv } from '../data/db'
 export interface AiRequest { system: string; prompt: string; json?: boolean }
 interface Provider { name: string; complete(r: AiRequest): Promise<string> }
 
-export const AI_DEFAULTS = { geminiModel: 'gemini-3.8-flash', groqModel: 'openai/gpt-oss-120b' }
+// Gemini: mehrere Modelle, jedes mit eigenem Kontingent; nicht verfügbare werden übersprungen (404 → nächster)
+export const AI_DEFAULTS = { geminiModel: 'gemini-3.8-flash, gemini-3.5-flash, gemini-3-flash-preview', groqModel: 'openai/gpt-oss-120b' }
 
 /** until: Anbieter ist bis dahin gesperrt (langes Limit) – nicht vorher erneut fragen. */
 class AiError extends Error { constructor(public status: number, msg: string, public until = 0) { super(msg) } }
@@ -61,7 +62,7 @@ export const AI_PRESETS: Omit<ExtraAi, 'id' | 'key'>[] = [
   { name: 'Eigener Anbieter', url: '', model: '' },
 ]
 
-const models = (v: string | undefined, fallback: string) => (v || fallback).split(',').map(x => x.trim()).filter(Boolean)
+const models = (v: string | undefined, fallback: string) => [...new Set((v || fallback).split(',').map(x => x.trim()).filter(Boolean))]   // doppelte raus (z. B. nach automatischem Nachfolger-Tausch)
 
 /** OpenAI-kompatible Chat-Schnittstelle (Groq, OpenRouter, Cerebras, Mistral …). */
 async function openAi(label: string, url: string, key: string, model: string, { system, prompt, json }: AiRequest) {
