@@ -4,11 +4,12 @@ import { completeJson, hasAi, status } from '../ai'
 import { db, kv, type Choice, type Playlist, type Profile, type Track } from '../data/db'
 import { addToPlaylist } from '../spotify/api'
 import { getLessons, type Lesson } from './lessons'
+import { getStyles, styleMatch } from './style'
 import { DEFAULT_SOUND, soundOf, soundVotes, type SoundParams } from './sound'
 
 export interface Suggestion { playlist: Playlist; reason: string }
 /** Bausteine der Punkte – einzeln abschaltbar für die Signal-Analyse der Trefferquote. */
-export const SIGNALS = { artist: 'Künstler schon drin', sound: 'Klang', chosen: 'Deine Hinzufügungen', rejected: '✕ Ablehnungen', lessons: 'Merksätze', era: 'Epoche', general: 'Oft gewählte Playlists', bias: 'Magnet-Bremse' } as const
+export const SIGNALS = { artist: 'Künstler schon drin', sound: 'Klang', chosen: 'Deine Hinzufügungen', rejected: '✕ Ablehnungen', lessons: 'Merksätze', genre: 'Genre (Steckbrief)', lang: 'Sprache (Steckbrief)', era: 'Epoche', general: 'Oft gewählte Playlists', bias: 'Magnet-Bremse' } as const
 export type Signal = keyof typeof SIGNALS
 export type Parts = Record<Signal, number>
 
@@ -42,7 +43,7 @@ export function score(song: Track, tracks: Track[], prof: Profile | undefined, c
   const lr = same.filter(l => l.right.includes(playlistId)).length, lw = same.filter(l => l.wrong === playlistId).length
   const parts: Parts = {
     artist: Math.min(k, 5) * 2, chosen: w * 3, rejected: -no * 4, lessons: Math.min(lr, 3) * 2 - Math.min(lw, 3) * 2,
-    era: era ? 2 : 0, general: Math.min(mine.length, 6) * .25, sound: 0, bias: 0,   // Klang und Magnet-Bremse kommen in compute() dazu
+    era: era ? 2 : 0, general: Math.min(mine.length, 6) * .25, sound: 0, bias: 0, genre: 0, lang: 0,   // Klang, Steckbrief und Magnet-Bremse kommen in compute() dazu
   }
   return { k, w, era, parts, score: sum(parts) }
 }
@@ -100,12 +101,13 @@ export async function loadLibrary() {
   const [all, profiles, choices, excluded, allTracks, lessons, weights, soundParams, noLearn, bias, aiMargin] = await Promise.all([d.getAll('playlists'), d.getAll('profiles'), d.getAll('choices'), getExcluded(), d.getAll('tracks'), getLessons(), kv.get<Weights>('weights'), kv.get<SoundParams>('soundParams'), getNoLearn(), kv.get<Record<string, number>>('bias'), kv.get<number>('aiMargin')])
   const tracks = allTracks.map(t => noLearn.has(t.id) ? { id: t.id, tracks: [] } : t)   // „Lernen“ aus: Songs zählen nirgends als Vorbild
   const sound = new Map((await d.getAll('sound')).map(s => [s.id, s]))
+  const styles = await getStyles()
   const inPl = new Map<string, string[]>()   // Song → Playlists, in denen er liegt (für den Klangvergleich)
   for (const t of tracks) for (const x of t.tracks) inPl.set(x.id, [...(inPl.get(x.id) ?? []), t.id])
   const plSize = new Map<string, number>()   // Songs mit Klangdaten je Playlist (für den Größen-Ausgleich)
   for (const t of tracks) plSize.set(t.id, t.tracks.filter(x => { const s = sound.get(x.id); return s && s.src !== 'fehlt' }).length)
   const has = new Map(allTracks.map(t => [t.id, new Set(t.tracks.map(x => x.id))]))   // „schon drin“ immer mit allen Songs
-  return { all, profiles, choices, excluded, noLearn, has, lessons, sound, inPl, plSize, weights: weights ?? {}, soundParams: soundParams ?? DEFAULT_SOUND, bias: bias ?? {}, aiMargin, tracks: new Map(tracks.map(t => [t.id, t.tracks])) }
+  return { all, profiles, choices, excluded, noLearn, has, lessons, sound, styles, inPl, plSize, weights: weights ?? {}, soundParams: soundParams ?? DEFAULT_SOUND, bias: bias ?? {}, aiMargin, tracks: new Map(tracks.map(t => [t.id, t.tracks])) }
 }
 
 async function compute(song: Track, opts: { test?: boolean; local?: boolean; lib?: Library }): Promise<SuggestResult> {
@@ -117,6 +119,7 @@ async function compute(song: Track, opts: { test?: boolean; local?: boolean; lib
   const f = await soundOf(song, lib.sound)
   const votes = f ? soundVotes(f, lib.sound, lib.inPl, song.id, lib.soundParams, lib.plSize) : new Map<string, number>()
   status('berechne Punkte')
+  const st = lib.styles.get(song.id)
   const choices = opts.test ? allChoices.filter(c => c.trackId !== song.id) : allChoices
   const never = new Set(choices.filter(c => c.rejected && c.trackId === song.id).map(c => c.playlistId))
   const profOf = new Map(profiles.map(p => [p.id, p]))
@@ -129,7 +132,9 @@ async function compute(song: Track, opts: { test?: boolean; local?: boolean; lib
       tracks = tracks.filter(t => t.id !== song.id)
     }
     const s = score(song, tracks, profOf.get(p.id), choices, p.id, lessons), kl = votes.get(p.id) ?? 0
-    const parts = { ...s.parts, sound: kl * 8, bias: lib.bias[p.id] ?? 0 }   // Klang: bis zu 8 Punkte; Magnet-Bremse: gelernter Ausgleich je Playlist
+    const m = styleMatch(st, tracks, lib.styles)
+    // Klang: bis zu 8 Punkte; Genre: bis zu 6; Sprache: −2 (keiner spricht so) bis +2 (alle); Magnet-Bremse: gelernter Ausgleich je Playlist
+    const parts = { ...s.parts, sound: kl * 8, genre: m.genre * 6, lang: (m.lang - .5) * 4, bias: lib.bias[p.id] ?? 0 }
     cands.push({ p, prof: profOf.get(p.id), tracks, ...s, kl, parts, score: sum(parts, undefined, lib.weights) })
   }
   cands.sort((a, b) => b.score - a.score)
@@ -193,6 +198,7 @@ ${blocks}` })
 
 function localReason(song: Track, c: Cand) {
   if (c.kl >= .3) return `Klingt wie viele Songs hier (${Math.round(c.kl * 100)} % der ähnlichsten).`
+  if (c.parts.genre >= 3) return 'Genre und Sprache passen zu vielen Songs hier.'
   if (c.w) return `Dorthin hast du ${song.artists[0]} schon ${c.w}× gelegt.`
   if (c.k) return c.k > 1 ? `${c.k} Songs von ${song.artists[0]} sind schon drin.` : `Ein Song von ${song.artists[0]} ist schon drin.`
   if (c.era) return `Passt zur Epoche der Playlist (${c.prof?.era}).`

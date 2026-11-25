@@ -10,6 +10,8 @@ import { accessToken, handleRedirect, login, logout, redirectUri } from '../spot
 import { glassScroll } from './glass/scroll'
 import { exportData, importData, persisted } from '../data/backup'
 import { estimateSound, findAlternates, soundStats, syncSound } from '../features/sound'
+import { styleStats, syncStyles } from '../features/style'
+import { autoTune, lastAutoTune } from '../features/weights'
 import { CoverRow } from './Cover'
 import { Player } from './Player'
 import { PlaylistView } from './PlaylistView'
@@ -68,7 +70,11 @@ export function App() {
         } catch (e) { await load(); setStatus('Profile unvollständig'); setError((e as Error).message) }   // fertige Stapel bleiben gespeichert, Rest beim nächsten Abgleich
         try { if (await estimateSound((i, all) => all && setStatus(`Klang schätzen ${i}/${all}`))) setStatus('Klang aktuell') }
         catch (e) { console.warn('Klang-Schätzung:', e) }
+        try { if (await syncStyles((i, all) => all && setStatus(`Steckbriefe ${i}/${all}`))) setStatus('Steckbriefe aktuell') }
+        catch (e) { setStatus('Steckbriefe unvollständig'); console.warn('Steckbriefe:', e) }   // fertige Stapel bleiben, Rest beim nächsten Abgleich
       }
+      // Einmal am Tag selbst nachjustieren (ohne KI, nur übernommen, wenn es messbar besser trifft)
+      if (Date.now() - ((await lastAutoTune())?.at ?? 0) > 86_400_000) autoTune().catch(e => console.warn('Selbst-Abstimmung:', e))
       findAlternates().catch(e => console.warn('Andere Versionen:', e))   // im Hintergrund, gedeckelt
     } catch (e) {
       if (e instanceof NotLoggedIn) setLoggedIn(false)
@@ -395,12 +401,14 @@ function Backup({ onError }: { onError: (m: string) => void }) {
 /** Klangdaten-Abdeckung der Sammlung: echt (ReccoBeats), von der KI geschätzt, noch offen. */
 function SoundStatus() {
   const [st, setSt] = useState<{ echt: number; schätzung: number; fehlt: number } | null>(null)
-  useEffect(() => { soundStats().then(setSt) }, [])
+  const [sty, setSty] = useState<{ done: number; all: number } | null>(null)
+  useEffect(() => { soundStats().then(setSt); styleStats().then(setSty) }, [])
   const all = st ? st.echt + st.schätzung + st.fehlt : 0
   return <section className="panel glass">
     <h2>Klangdaten</h2>
     <p className="cap left">Tempo, Energie, Tanzbarkeit und Stimmung jedes Songs – damit vergleicht die App Songs nach echtem Klang. Quelle: ReccoBeats (kostenlos). Fehlende schätzt die KI; beim Abgleich sucht die App nach und nach andere Versionen mit echten Daten.</p>
     {st && <p className="cap left">{all ? `${st.echt} echt · ${st.schätzung} geschätzt · ${st.fehlt} offen (von ${all} Songs)` : 'Noch keine – kommt beim nächsten Abgleich.'}</p>}
+    <p className="cap left"><b>Steckbriefe</b> (Genre und Sprache je Song, einmalig von der KI, danach rechnen die Punkte ohne KI): {sty ? `${sty.done} von ${sty.all} Songs` : '…'}{sty && sty.done < sty.all ? ' – der Rest kommt bei den nächsten Abgleichen.' : ''}</p>
   </section>
 }
 

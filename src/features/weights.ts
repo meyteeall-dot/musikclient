@@ -28,6 +28,16 @@ export const getWeights = async () => (await kv.get<Weights>('weights')) ?? {}
 export const getSoundParams = async () => (await kv.get<SoundParams>('soundParams')) ?? DEFAULT_SOUND
 export async function saveTuning(w: Weights, s: SoundParams, b: Record<string, number>) { await kv.set('weights', w); await kv.set('soundParams', s); await kv.set('bias', b) }
 export async function resetTuning() { await kv.del('weights'); await kv.del('soundParams'); await kv.del('bias') }
+/** Selbstständig nachjustieren: neue Einstellungen nur übernehmen, wenn sie auf der Prüf-Hälfte spürbar besser treffen. */
+export async function autoTune(onProgress?: (text: string) => void) {
+  const r = await optimizeAll(onProgress)
+  const saved = r.after.test >= r.before.test + .003   // mindestens 0,3 Prozentpunkte – darunter ist es Zufall
+  if (saved) await saveTuning(r.weights, r.sound, r.bias)
+  await kv.set('autoTune', { at: Date.now(), before: r.before.test, after: r.after.test, saved })
+  return r
+}
+export interface AutoTune { at: number; before: number; after: number; saved: boolean }
+export const lastAutoTune = () => kv.get<AutoTune>('autoTune')
 export const getBias = async () => (await kv.get<Record<string, number>>('bias')) ?? {}
 
 const tick = () => new Promise(r => setTimeout(r))   // Anzeige zwischendurch atmen lassen

@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import { lastAccuracy, measureAccuracy, type Ablation, type Accuracy, type Miss, type Pair, type Step } from '../features/accuracy'
 import { kv } from '../data/db'
 import { SIGNALS, type Signal, type Weights } from '../features/suggest'
-import { getBias, getSoundParams, getWeights, optimizeAll, resetTuning, saveTuning, type Optimized } from '../features/weights'
+import { autoTune, getBias, getSoundParams, getWeights, lastAutoTune, optimizeAll, resetTuning, saveTuning, type AutoTune, type Optimized } from '../features/weights'
+import { syncStyles } from '../features/style'
 import { DEFAULT_SOUND, KEYS, type SoundParams } from '../features/sound'
-import { aiHealth } from '../ai'
+import { aiHealth, hasAi } from '../ai'
 import { forgetLesson, getLessons } from '../features/lessons'
 import { doneInbox, loadInbox } from '../features/inbox'
 import { buildMix, createMix, type Mix } from '../features/mix'
@@ -35,6 +36,7 @@ function AccuracyPanel({ onError }: { onError: (m: string) => void }) {
   const [res, setRes] = useState<Accuracy | null>(null)
   const [n, setN] = useState(10)
   const [endless, setEndless] = useState(false)
+  const [tune, setTune] = useState('')
   const [localOnly, setLocalOnly] = useState(false)   // „nur Punkte“: ohne KI, kostenlos, ohne Limits
   const [tot, setTot] = useState<Totals | null>(null)   // Endlos-Modus: Summe über alle Runden
   const [prog, setProg] = useState<{ done: number; total: number; steps: Step[]; t0: number; round: number } | null>(null)
@@ -86,6 +88,10 @@ function AccuracyPanel({ onError }: { onError: (m: string) => void }) {
         setTot({ ...t }); setRes(x)
         setLearned((await getLessons()).length)
       }
+      if (t.n >= 20) {   // nach dem Endlos-Lauf die Punkte selbst nachjustieren
+        const r = await autoTune(x => setTune(`Stimmt die Punkte selbst nach: ${x}`))
+        setTune(`Selbst nachjustiert: ${Math.round(r.before.test * 100)} % → ${Math.round(r.after.test * 100)} % (Prüf-Hälfte) · ${r.after.test >= r.before.test + .003 ? 'übernommen' : 'kein echter Gewinn – nichts geändert'}`)
+      }
     } catch (e) { setErr((e as Error).message); onError((e as Error).message) }
     finally { lock?.release?.(); setProg(null); setWait(0); getLessons().then(l => setLearned(l.length)) }
   }
@@ -126,6 +132,7 @@ function AccuracyPanel({ onError }: { onError: (m: string) => void }) {
       <button className={'pill glass' + (!localOnly ? ' hot' : '')} disabled={busy} onClick={() => setLocalOnly(false)}>Mit KI</button>
       <button className={'pill glass' + (localOnly ? ' hot' : '')} disabled={busy} onClick={() => setLocalOnly(true)}>Nur Punkte</button>
     </div>
+    {tune && <p className="cap left">{tune}</p>}
     {localOnly && <p className="cap left">Nur Punkte: ohne KI, kostenlos, ohne Limits – prüft in Sekunden viele Songs. Ideal für „Was zählt wie viel“. Endlos geht einmal durch die ganze Sammlung.</p>}
     <div className="actions">
       {[10, 20].map(x => <button key={x} className={'pill glass' + (!endless && n === x ? ' hot' : '')} disabled={busy} onClick={() => { setN(x); setEndless(false) }}>{x} Songs</button>)}
@@ -157,7 +164,7 @@ function InboxPanel({ onError, onPick }: { onError: (m: string) => void; onPick:
   const [list, setList] = useState<SearchHit[] | null>(inboxCache)
   const [busy, setBusy] = useState(false)
   const show = (l: SearchHit[]) => { inboxCache = l; setList(l) }
-  const load = () => { setBusy(true); loadInbox().then(show, e => onError(e.message)).finally(() => setBusy(false)) }
+  const load = () => { setBusy(true); loadInbox().then(l => { show(l); hasAi().then(a => { if (a) return syncStyles(undefined, l, 1) }).catch(() => {}) }, e => onError(e.message)).finally(() => setBusy(false)) }   // Steckbriefe der Inbox-Songs: eine KI-Anfrage
   const skip = (h: SearchHit) => { doneInbox(h.id); show(list!.filter(x => x !== h)) }
   return <section className="panel glass">
     <h2>Inbox</h2>
@@ -224,7 +231,8 @@ function WeightsPanel({ onError }: { onError: (m: string) => void }) {
   const [res, setRes] = useState<Optimized | null>(null)
   const [busy, setBusy] = useState('')
   const [saved, setSaved] = useState(false)
-  useEffect(() => { Promise.all([getWeights(), getSoundParams(), getBias()]).then(([w, s, b]) => setCur({ w, s, b })) }, [])
+  const [auto, setAuto] = useState<AutoTune | undefined>()
+  useEffect(() => { Promise.all([getWeights(), getSoundParams(), getBias()]).then(([w, s, b]) => setCur({ w, s, b })); lastAutoTune().then(setAuto) }, [])
   const run = async () => {
     setBusy('starte …'); setRes(null); setSaved(false)
     try { setRes(await optimizeAll(setBusy)) } catch (e) { onError((e as Error).message) }
@@ -238,6 +246,7 @@ function WeightsPanel({ onError }: { onError: (m: string) => void }) {
   return <section className="panel glass">
     <h2>Feinabstimmung</h2>
     <p className="cap left">Die App stellt erst den Klangvergleich fein ein (wie viele ähnliche Songs abstimmen, wie stark Energie, Sprechgesang, Tempo … zählen), dann die Gewichte der Fakten – gelernt an der einen Hälfte deiner Songs, geprüft an der anderen. Dazu: welche Playlists am häufigsten verwechselt werden. Ohne KI, kostenlos, ein paar Minuten.</p>
+    {auto && <p className="cap left">Selbstständig: läuft einmal am Tag beim Abgleich und nach jedem Endlos-Test. Zuletzt {new Date(auto.at).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' })}: {Math.round(auto.before * 100)} % → {Math.round(auto.after * 100)} % · {auto.saved ? 'übernommen' : 'nichts geändert'}</p>}
     {busy && <p className="cap left">{busy}</p>}
     {res && <>
       <div className="stats">
