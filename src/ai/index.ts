@@ -31,32 +31,25 @@ export function waitOf(r: { headers: { get(k: string): string | null } }, j: any
   return ms
 }
 
-/** POST mit Geduld bei kurzen Limits (429): wartet bis 30 s, sonst gleich weiter zum nächsten Anbieter. Nie ohne Ende. */
+/** POST ohne Warten: bei einem Limit (429) sofort weiter zum nächsten Modell, gesperrt bis zur genannten Zeit. Gewartet wird nur, wenn alle am Limit sind (complete). */
 async function post(label: string, url: string, headers: Record<string, string>, body: unknown) {
-  for (let attempt = 0; ; attempt++) {
-    status(`${label} antwortet`)
-    let r: Response
-    try {
-      r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body), signal: AbortSignal.timeout(90_000) })
-    } catch (e) {
-      throw new AiError(0, (e as Error).name === 'TimeoutError' ? 'keine Antwort nach 90 s' : 'nicht erreichbar')
-    }
-    const j = await r.json().catch(() => ({}))
-    if (r.ok) return j
-    const msg = `${r.status} ${j.error?.message ?? (typeof j.error === 'string' ? j.error : '')} ${j.message ?? j.detail ?? ''}`.replace(/\s+/g, ' ').trim()   // Mistral & Co. melden den Grund unter message/detail
-    // 429 trotz Warten: vermutlich Tageskontingent ohne Zeitangabe – 30 Min. Ruhe für diesen Anbieter
-    // Limit 0: dieses Modell ist im Gratis-Tarif gar nicht freigegeben – einen Tag lang überspringen
-    if (r.status === 429 && (/limit: 0\b/.test(msg) || r.headers.get('x-ratelimit-limit-req-minute') === '0')) throw new AiError(429, 'im Gratis-Tarif nicht freigegeben (Limit 0)', Date.now() + 86_400_000)
-    // Modell braucht ein Abo, fehlt oder ist gesperrt: einen Tag überspringen statt bei jeder Anfrage erneut
-    if ([401, 402, 403, 404].includes(r.status) || /subscription|paid|upgrade|billing|credits/i.test(msg)) throw new AiError(r.status, msg, Date.now() + 86_400_000)
-    if (r.status !== 429 || attempt >= 3) throw new AiError(r.status, msg, r.status === 429 ? Date.now() + 30 * 60_000 : 0)
-    const said = waitOf(r, j, msg)
-    // Langes Limit (Minuten bis Stunden = Tageskontingent): nicht warten, der nächste Anbieter soll übernehmen
-    if (said > 30_000) throw new AiError(429, `Limit erreicht, wieder frei in ca. ${Math.ceil(said / 60_000)} Min.`, Date.now() + said)
-    const wait = Math.max(said, [3000, 8000, 20000][attempt])
-    status(`${label}: Limit, warte ${Math.round(wait / 1000)} s`)
-    await sleep(wait)
+  status(`${label} antwortet`)
+  let r: Response
+  try {
+    r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body), signal: AbortSignal.timeout(90_000) })
+  } catch (e) {
+    throw new AiError(0, (e as Error).name === 'TimeoutError' ? 'keine Antwort nach 90 s' : 'nicht erreichbar')
   }
+  const j = await r.json().catch(() => ({}))
+  if (r.ok) return j
+  const msg = `${r.status} ${j.error?.message ?? (typeof j.error === 'string' ? j.error : '')} ${j.message ?? j.detail ?? ''}`.replace(/\s+/g, ' ').trim()   // Mistral & Co. melden den Grund unter message/detail
+  // Limit 0: dieses Modell ist im Gratis-Tarif gar nicht freigegeben – einen Tag lang überspringen
+  if (r.status === 429 && (/limit: 0\b/.test(msg) || r.headers.get('x-ratelimit-limit-req-minute') === '0')) throw new AiError(429, 'im Gratis-Tarif nicht freigegeben (Limit 0)', Date.now() + 86_400_000)
+  // Modell braucht ein Abo, fehlt oder ist gesperrt: einen Tag überspringen statt bei jeder Anfrage erneut
+  if ([401, 402, 403, 404].includes(r.status) || (r.status !== 429 && /subscription|paid|upgrade|billing|credits/i.test(msg))) throw new AiError(r.status, msg, Date.now() + 86_400_000)
+  if (r.status !== 429) throw new AiError(r.status, msg)
+  const said = waitOf(r, j, msg) || 60_000   // ohne Zeitangabe: in einer Minute wieder probieren
+  throw new AiError(429, said > 60_000 ? `Limit, wieder frei in ca. ${Math.ceil(said / 60_000)} Min.` : `Limit, wieder frei in ${Math.ceil(said / 1000)} s`, Date.now() + said)
 }
 
 /** Weitere Anbieter (OpenAI-kompatibel), unter Optionen gepflegt. */
@@ -178,20 +171,29 @@ const health = new Map<string, { until: number; error: string }>()
 export const aiHealth = () => known.map(name => { const h = health.get(name); return { name, until: h && h.until > Date.now() ? h.until : 0, error: h?.error ?? '' } })
 
 export async function complete<T = string>(r: AiRequest, parse: (text: string) => T = t => t as T) {
-  const errors: string[] = []
-  for (const p of await providers()) {
-    const h = health.get(p.name)
-    if (h && h.until > Date.now()) { errors.push(`${p.name}: ${h.error}`); continue }
-    try {
-      const data = parse(await p.complete(r))
-      health.delete(p.name)
-      return { data, provider: p.name }
-    } catch (e) {
-      const m = (e as Error).message
-      errors.push(`${p.name}: ${m}`)
-      health.set(p.name, { until: e instanceof AiError ? e.until : 0, error: m })
-      status(`${p.name} fehlgeschlagen (${m.slice(0, 60)}) – nächster Anbieter`)
+  const ps = await providers()
+  let errors: string[] = []
+  for (let round = 0; round < 3; round++) {
+    errors = []
+    for (const p of ps) {
+      const h = health.get(p.name)
+      if (h && h.until > Date.now()) { errors.push(`${p.name}: ${h.error}`); continue }
+      try {
+        const data = parse(await p.complete(r))
+        health.delete(p.name)
+        return { data, provider: p.name }
+      } catch (e) {
+        const m = (e as Error).message
+        errors.push(`${p.name}: ${m}`)
+        health.set(p.name, { until: e instanceof AiError ? e.until : 0, error: m })
+        status(`${p.name}: ${m.slice(0, 60)} – nächstes Modell`)
+      }
     }
+    // Alle am Limit: auf das erste, das binnen einer Minute wieder frei wird, warten – sonst aufgeben
+    const free = Math.min(...ps.map(p => health.get(p.name)?.until ?? 0).filter(u => u > Date.now()))
+    if (!isFinite(free) || free - Date.now() > 60_000) break
+    status(`alle Modelle am Limit, warte ${Math.ceil((free - Date.now()) / 1000)} s`)
+    await sleep(free - Date.now() + 500)
   }
   throw new Error(errors.length ? 'KI nicht erreichbar – ' + errors.join(' | ') : 'Kein KI-Schlüssel eingetragen')
 }
