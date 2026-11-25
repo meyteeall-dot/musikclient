@@ -5,6 +5,7 @@ import { db, kv } from '../data/db'
 import { getExcluded, getNoLearn } from './suggest'
 import { getStyles } from './style'
 import { getNotes, setNote } from './notes'
+import { GUIDE } from './guide'
 
 export interface Msg { role: 'user' | 'jarvis'; text: string; saved?: string[] }
 
@@ -20,7 +21,9 @@ Du kennst nur seine Spotify-Sammlung (unten). Deine Aufgaben:
 Notizen sind die Regeln, nach denen die Sortier-KI entscheidet. Schreib sie als klare Anweisung in seiner Sicht („Hier nur …, keine …“). „add“ ergänzt die bestehende Notiz, „replace“ ersetzt sie, „delete“ löscht sie.
 Brauchst du konkrete Songs (eines Künstlers, einer Playlist oder einen bestimmten Titel), fordere sie mit „lookup“ an statt zu raten; du bekommst sie dann und antwortest erst danach.
 Antworte ausschließlich mit JSON: {"reply":"…","notes":[{"playlist":"exakter Name","mode":"add|replace|delete","text":"…"}],"lookup":{"artist":"…"} oder {"playlist":"…"} oder {"song":"…"}}
-„notes“ und „lookup“ nur, wenn nötig.`
+„notes“ und „lookup“ nur, wenn nötig.
+
+${GUIDE}`
 
 /** Kompakte Übersicht der Sammlung – eine Zeile je Playlist. */
 async function overview() {

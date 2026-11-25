@@ -6,6 +6,7 @@ import { addToPlaylist } from '../spotify/api'
 import { getLessons, type Lesson } from './lessons'
 import { getStyles, styleMatch } from './style'
 import { getNotes } from './notes'
+import { GUIDE } from './guide'
 import { DEFAULT_SOUND, soundOf, soundVotes, type SoundParams } from './sound'
 
 export interface Suggestion { playlist: Playlist; reason: string }
@@ -77,7 +78,7 @@ function sample(song: Track, tracks: Track[], n: number) {
   return out.slice(0, n).map(t => `${t.artists[0]} – ${t.name}${t.year ? ` (${t.year})` : ''}`)
 }
 
-const SYSTEM = 'Du ordnest Songs den passenden Playlists eines Nutzers zu. Der Nutzer sortiert sehr genau nach Klang, Stimmung, Genre und Epoche. Antworte ausschließlich mit JSON.'
+const SYSTEM = `Du ordnest Songs den passenden Playlists eines Nutzers zu. Antworte ausschließlich mit JSON.\n\n${GUIDE}`
 const songLine = (s: Track) => `${s.name} – ${s.artists.join(', ')}${s.year ? ` (${s.year})` : ''}, Album „${s.album}“`
 
 // Gleicher Song erneut geöffnet (zurück/vor, Inbox): Ergebnis wiederverwenden statt neu fragen; Hinzufügen/Ablehnen leert es

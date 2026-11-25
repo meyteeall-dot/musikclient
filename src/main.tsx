@@ -3,6 +3,7 @@ import { registerSW } from 'virtual:pwa-register'
 import { persist } from './data/backup'
 import { AI_DEFAULTS, AI_PRESETS, refreshModels, type ExtraAi } from './ai'
 import { kv } from './data/db'
+import { seedGuide } from './features/guide'
 import { App } from './ui/App'
 import { applyGlass, applyTheme, initGlass, GLASS_DEFAULTS, type GlassValues, type ThemeId } from './ui/glass/engine'
 import './ui/theme.css'
@@ -19,6 +20,7 @@ if (!(await kv.get('aiMigr1'))) {
 }
 // Einmal am Tag neue Modelle der Anbieter eintragen (im Hintergrund)
 if (Date.now() - ((await kv.get<number>('modelsAt')) ?? 0) > 86_400_000) refreshModels().catch(() => {})
+seedGuide().catch(e => console.warn('Leitfaden:', e))   // Sortier-Leitfaden des Nutzers als Notizen je Playlist
 applyTheme((await kv.get<ThemeId>('theme')) ?? 'color')
 applyGlass({ ...GLASS_DEFAULTS, ...(await kv.get<GlassValues>('glass')) })
 initGlass(document.getElementById('gl') as HTMLCanvasElement)

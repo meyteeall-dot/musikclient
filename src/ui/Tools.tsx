@@ -188,9 +188,10 @@ function ChatPanel({ onError }: { onError: (m: string) => void }) {
   const [busy, setBusy] = useState(false)
   const [notes, setNotes] = useState<Record<string, string>>({})
   const [names, setNames] = useState(new Map<string, string>())
+  const [missing, setMissing] = useState<string[]>([])
   const reload = () => { getNotes().then(setNotes) }
   useEffect(() => {
-    getChat().then(setMsgs); reload()
+    getChat().then(setMsgs); reload(); kv.get<{ missing: string[] }>('guideSeed').then(g => setMissing(g?.missing ?? []))
     db.then(d => d.getAll('playlists')).then(p => setNames(new Map(p.map(x => [x.id, x.name]))))
   }, [])
   const send = async () => {
@@ -215,6 +216,7 @@ function ChatPanel({ onError }: { onError: (m: string) => void }) {
       <button className="pill glass hot" disabled={!text.trim() || busy} onClick={send}>{busy ? 'Jarvis denkt …' : 'Senden'}</button>
       {!!msgs.length && <button className="pill glass mini" disabled={busy} onClick={() => { clearChat(); setMsgs([]) }}>Verlauf löschen</button>}
     </div>
+    {!!missing.length && <p className="cap left">Aus Ihrem Leitfaden keiner Playlist zuordnen konnte ich: {missing.join(', ')}. Heißen die bei Spotify anders, sagen Sie es mir hier.</p>}
     {!!list.length && <details className="misses"><summary>Gemerkte Notizen ({list.length})</summary>
       <ul>{list.map(([id, t]) => <li key={id}><b>{names.get(id) ?? '?'}</b><small>{t}</small>
         <button className="pill glass mini" onClick={() => del(id)}>Löschen</button></li>)}</ul>
