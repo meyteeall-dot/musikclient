@@ -41,7 +41,7 @@ async function post(label: string, url: string, headers: Record<string, string>,
     }
     const j = await r.json().catch(() => ({}))
     if (r.ok) return j
-    const msg = `${r.status} ${j.error?.message ?? ''}`.trim()
+    const msg = `${r.status} ${j.error?.message ?? (typeof j.error === 'string' ? j.error : '')} ${j.message ?? j.detail ?? ''}`.replace(/\s+/g, ' ').trim()   // Mistral & Co. melden den Grund unter message/detail
     // 429 trotz Warten: vermutlich Tageskontingent ohne Zeitangabe – 30 Min. Ruhe für diesen Anbieter
     if (r.status !== 429 || attempt >= 3) throw new AiError(r.status, msg, r.status === 429 ? Date.now() + 30 * 60_000 : 0)
     const said = waitOf(r, j, msg)
