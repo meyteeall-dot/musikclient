@@ -5,6 +5,7 @@ import { db, kv, type Choice, type Playlist, type Profile, type Track } from '..
 import { addToPlaylist } from '../spotify/api'
 import { getLessons, type Lesson } from './lessons'
 import { getStyles, styleMatch } from './style'
+import { getNotes } from './notes'
 import { DEFAULT_SOUND, soundOf, soundVotes, type SoundParams } from './sound'
 
 export interface Suggestion { playlist: Playlist; reason: string }
@@ -101,13 +102,13 @@ export async function loadLibrary() {
   const [all, profiles, choices, excluded, allTracks, lessons, weights, soundParams, noLearn, bias, aiMargin] = await Promise.all([d.getAll('playlists'), d.getAll('profiles'), d.getAll('choices'), getExcluded(), d.getAll('tracks'), getLessons(), kv.get<Weights>('weights'), kv.get<SoundParams>('soundParams'), getNoLearn(), kv.get<Record<string, number>>('bias'), kv.get<number>('aiMargin')])
   const tracks = allTracks.map(t => noLearn.has(t.id) ? { id: t.id, tracks: [] } : t)   // „Lernen“ aus: Songs zählen nirgends als Vorbild
   const sound = new Map((await d.getAll('sound')).map(s => [s.id, s]))
-  const styles = await getStyles()
+  const styles = await getStyles(), notes = await getNotes()
   const inPl = new Map<string, string[]>()   // Song → Playlists, in denen er liegt (für den Klangvergleich)
   for (const t of tracks) for (const x of t.tracks) inPl.set(x.id, [...(inPl.get(x.id) ?? []), t.id])
   const plSize = new Map<string, number>()   // Songs mit Klangdaten je Playlist (für den Größen-Ausgleich)
   for (const t of tracks) plSize.set(t.id, t.tracks.filter(x => { const s = sound.get(x.id); return s && s.src !== 'fehlt' }).length)
   const has = new Map(allTracks.map(t => [t.id, new Set(t.tracks.map(x => x.id))]))   // „schon drin“ immer mit allen Songs
-  return { all, profiles, choices, excluded, noLearn, has, lessons, sound, styles, inPl, plSize, weights: weights ?? {}, soundParams: soundParams ?? DEFAULT_SOUND, bias: bias ?? {}, aiMargin, tracks: new Map(tracks.map(t => [t.id, t.tracks])) }
+  return { all, profiles, choices, excluded, noLearn, has, lessons, sound, styles, notes, inPl, plSize, weights: weights ?? {}, soundParams: soundParams ?? DEFAULT_SOUND, bias: bias ?? {}, aiMargin, tracks: new Map(tracks.map(t => [t.id, t.tracks])) }
 }
 
 async function compute(song: Track, opts: { test?: boolean; local?: boolean; lib?: Library }): Promise<SuggestResult> {
@@ -149,12 +150,12 @@ async function compute(song: Track, opts: { test?: boolean; local?: boolean; lib
     let short = cands.slice(0, SHORTLIST)
     if (cands.length > SHORTLIST) {
       const lines = cands.map((c, i) => JSON.stringify({
-        i, n: c.p.name, g: c.prof?.genres.join(', '), e: c.prof?.era, m: c.prof?.mood, a: c.prof?.artists.slice(0, 5).join(', '),
+        i, n: c.p.name, ...(lib.notes[c.p.id] ? { r: lib.notes[c.p.id].slice(0, 200) } : {}), g: c.prof?.genres.join(', '), e: c.prof?.era, m: c.prof?.mood, a: c.prof?.artists.slice(0, 5).join(', '),
         ...(c.k ? { k: c.k } : {}), ...(c.w ? { w: c.w } : {}), ...(c.kl >= .05 ? { kl: Math.round(c.kl * 100) } : {}),
       })).join('\n')
       const r1 = await completeJson<{ top: number[] }>({ system: SYSTEM, prompt: `Song: ${songLine(song)}
 Wähle die ${SHORTLIST} Playlists, in die dieser Song am ehesten passen könnte, beste zuerst.
-Felder: i = Nummer, n = Name, g = Genres, e = Epoche, m = Stimmung, a = Hauptkünstler, k = Songs desselben Künstlers schon drin, w = wie oft ich diesen Künstler schon dorthin gelegt habe, kl = Prozent der klanglich ähnlichsten Songs meiner Sammlung (Tempo, Energie, Stimmung …), die in dieser Playlist liegen.
+Felder: i = Nummer, n = Name, r = meine eigene Regel für diese Playlist (hat Vorrang), g = Genres, e = Epoche, m = Stimmung, a = Hauptkünstler, k = Songs desselben Künstlers schon drin, w = wie oft ich diesen Künstler schon dorthin gelegt habe, kl = Prozent der klanglich ähnlichsten Songs meiner Sammlung (Tempo, Energie, Stimmung …), die in dieser Playlist liegen.
 Format: {"top":[0,1,…]}
 
 Playlists:
@@ -168,10 +169,10 @@ ${lines}` })
       return m.length ? '\nMerke: ' + m.map(l => l.right.includes(id) ? `„${l.song}“ gehört hierher` : `„${l.song}“ gehört NICHT hierher, sondern nach ${l.right.map(r => nameOf.get(r)).join(' / ')}`).join('; ') : ''
     }
     // Stufe 2: die engere Wahl mit echten Songs aus jeder Playlist – daran erkennt die KI den Stil viel genauer
-    const blocks = short.map((c, i) => `[${i}] ${c.p.name}${c.prof ? ` – ${[c.prof.genres.join(', '), c.prof.era, c.prof.mood].filter(Boolean).join(' · ')}` : ''}${c.prof?.summary ? `\n${c.prof.summary}` : ''}${c.w ? `\nIch habe ${c.w}× Songs dieses Künstlers hierher gelegt.` : ''}${c.kl >= .05 ? `\nKlang: ${Math.round(c.kl * 100)} % der ähnlich klingenden Songs meiner Sammlung liegen hier.` : ''}
+    const blocks = short.map((c, i) => `[${i}] ${c.p.name}${c.prof ? ` – ${[c.prof.genres.join(', '), c.prof.era, c.prof.mood].filter(Boolean).join(' · ')}` : ''}${lib.notes[c.p.id] ? `\nMeine Regel: ${lib.notes[c.p.id]}` : ''}${c.prof?.summary ? `\n${c.prof.summary}` : ''}${c.w ? `\nIch habe ${c.w}× Songs dieses Künstlers hierher gelegt.` : ''}${c.kl >= .05 ? `\nKlang: ${Math.round(c.kl * 100)} % der ähnlich klingenden Songs meiner Sammlung liegen hier.` : ''}
 Songs: ${sample(song, c.tracks, SONGS_PER_CAND).join('; ') || '(keine Songs bekannt)'}${notes(c.p.id)}`).join('\n\n')
     const res = await completeJson<{ suggestions: { i: number; reason: string }[] }>({ system: SYSTEM, prompt: `Song: ${songLine(song)}
-Wähle die 3 Playlists, in die dieser Song am besten passt, beste zuerst. Vergleiche mit den Songs, die schon drin sind. Begründe jede mit einem kurzen deutschen Satz (höchstens 15 Wörter), konkret zu Klang, Stimmung, Genre oder ähnlichen Songs.
+Wähle die 3 Playlists, in die dieser Song am besten passt, beste zuerst. Vergleiche mit den Songs, die schon drin sind. „Meine Regel“ hat Vorrang vor allem anderen: widerspricht der Song einer Regel, wähle diese Playlist nicht. Begründe jede mit einem kurzen deutschen Satz (höchstens 15 Wörter), konkret zu Klang, Stimmung, Genre oder ähnlichen Songs.
 Format: {"suggestions":[{"i":0,"reason":"…"}]}
 
 ${blocks}` })

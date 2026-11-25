@@ -3,7 +3,7 @@
 import { db, kv } from './db'
 
 const STORES = ['playlists', 'tracks', 'profiles', 'choices', 'sound'] as const
-const KEYS = ['excluded', 'noLearn', 'inboxDone', 'accuracy', 'lessons', 'styles', 'weights', 'soundParams', 'bias', 'aiMargin', 'autoTune', 'theme', 'glass', 'clientId', 'geminiModel', 'groqModel', 'user']   // keine Tokens, keine Schlüssel
+const KEYS = ['excluded', 'noLearn', 'inboxDone', 'accuracy', 'lessons', 'styles', 'notes', 'weights', 'soundParams', 'bias', 'aiMargin', 'autoTune', 'theme', 'glass', 'clientId', 'geminiModel', 'groqModel', 'user']   // keine Tokens, keine Schlüssel
 
 /** Browser bitten, die Daten nicht von selbst zu löschen. true = zugesagt. */
 export const persist = async () => !!(await navigator.storage?.persist?.())

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { lastAccuracy, measureAccuracy, type Ablation, type Accuracy, type Miss, type Pair, type Step } from '../features/accuracy'
-import { kv } from '../data/db'
+import { db, kv } from '../data/db'
+import { ask, clearChat, getChat, type Msg } from '../features/chat'
+import { getNotes, setNote } from '../features/notes'
 import { SIGNALS, type Signal, type Weights } from '../features/suggest'
 import { autoTune, getBias, getSoundParams, getWeights, lastAutoTune, optimizeAll, resetTuning, saveTuning, type AutoTune, type Optimized } from '../features/weights'
 import { syncStyles } from '../features/style'
@@ -21,6 +23,7 @@ export function Tools({ onError, onAdded }: { onError: (m: string) => void; onAd
     onBack={() => setSong(null)} onAdded={() => { doneInbox(song.id); inboxCache = inboxCache?.filter(x => x.id !== song.id) ?? null; onAdded() }} />
   return <div className="panels">
     <InboxPanel onError={onError} onPick={setSong} />
+    <ChatPanel onError={onError} />
     <MixPanel onError={onError} />
     <AccuracyPanel onError={onError} />
     <WeightsPanel onError={onError} />
@@ -175,6 +178,47 @@ function InboxPanel({ onError, onPick }: { onError: (m: string) => void; onPick:
       <button className="never" aria-label="Überspringen" title="Überspringen" onClick={() => skip(h)}>✕</button>
     </li>)}</ul>}
     <div className="actions"><button className="pill glass hot" disabled={busy} onClick={load}>{busy ? 'Lade …' : list ? 'Neu laden' : 'Inbox laden'}</button></div>
+  </section>
+}
+
+/** Jarvis: Gespräch über die eigene Sammlung; merkt sich Notizen je Playlist, die beim Sortieren als Regel zählen. */
+function ChatPanel({ onError }: { onError: (m: string) => void }) {
+  const [msgs, setMsgs] = useState<Msg[]>([])
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [notes, setNotes] = useState<Record<string, string>>({})
+  const [names, setNames] = useState(new Map<string, string>())
+  const reload = () => { getNotes().then(setNotes) }
+  useEffect(() => {
+    getChat().then(setMsgs); reload()
+    db.then(d => d.getAll('playlists')).then(p => setNames(new Map(p.map(x => [x.id, x.name]))))
+  }, [])
+  const send = async () => {
+    const t = text.trim()
+    if (!t || busy) return
+    setText(''); setMsgs(m => [...m, { role: 'user', text: t }]); setBusy(true)
+    try { const r = await ask(t); setMsgs(m => [...m, r]); reload() }
+    catch (e) { onError((e as Error).message); setMsgs(m => m.slice(0, -1)); setText(t) }   // nichts verloren: Text zurück ins Feld
+    setBusy(false)
+  }
+  const del = async (id: string) => { await setNote(id, ''); reload() }
+  const list = Object.entries(notes)
+  return <section className="panel glass">
+    <h2>Jarvis</h2>
+    <p className="cap left">Erzählen Sie mir, was Sie sich bei Ihren Playlists denken – ich merke es mir als Notiz, und die Sortier-KI hält sich daran. Ich schlage auch vor, wie man etwas umsetzt, oder schreibe Ihnen die Regel, wie eine Playlist auszusehen hat.</p>
+    {!!msgs.length && <div className="chat">{msgs.slice(-30).map((m, i) => <div key={i} className={'bubble ' + (m.role === 'user' ? 'me' : 'j')}>
+      {m.text}{m.saved?.map(s => <small key={s} className="saved">✓ {s}</small>)}
+    </div>)}{busy && <div className="bubble j">…</div>}</div>}
+    <textarea className="field" rows={2} value={text} onChange={e => setText(e.target.value)} placeholder="z. B. „In Nachtfahrt nur Ruhiges ohne Rap“"
+      onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !('ontouchstart' in window)) { e.preventDefault(); send() } }} />
+    <div className="actions">
+      <button className="pill glass hot" disabled={!text.trim() || busy} onClick={send}>{busy ? 'Jarvis denkt …' : 'Senden'}</button>
+      {!!msgs.length && <button className="pill glass mini" disabled={busy} onClick={() => { clearChat(); setMsgs([]) }}>Verlauf löschen</button>}
+    </div>
+    {!!list.length && <details className="misses"><summary>Gemerkte Notizen ({list.length})</summary>
+      <ul>{list.map(([id, t]) => <li key={id}><b>{names.get(id) ?? '?'}</b><small>{t}</small>
+        <button className="pill glass mini" onClick={() => del(id)}>Löschen</button></li>)}</ul>
+    </details>}
   </section>
 }
 

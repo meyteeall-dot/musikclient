@@ -242,3 +242,11 @@ input[type=search]{-webkit-appearance:none;appearance:none}
 .tab .lbl{white-space:nowrap}
 
 @media (prefers-reduced-motion:reduce){.aura,.brand .dot{animation:none}.aura{translate:none}}
+
+/* Jarvis-Chat */
+.chat{display:flex;flex-direction:column;gap:8px}
+.bubble{max-width:88%;padding:10px 14px;border-radius:18px;font-size:14px;line-height:1.45;white-space:pre-wrap;-webkit-user-select:text;user-select:text}
+.bubble.me{align-self:flex-end;background:rgba(255,255,255,.16);border-bottom-right-radius:6px}
+.bubble.j{align-self:flex-start;background:rgba(0,0,0,.22);border-bottom-left-radius:6px}
+.bubble .saved{display:block;margin-top:6px;font-size:12px;color:var(--muted)}
+.misses li .pill{align-self:flex-start;margin-top:4px}
