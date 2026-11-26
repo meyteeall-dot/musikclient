@@ -5,6 +5,7 @@ import { findOutliers, saveDescription, writeDescription, type Outlier } from '.
 import { addToPlaylist } from '../spotify/api'
 import { play } from '../spotify/player'
 import { CoverRow } from './Cover'
+import { SongSuggest } from './Search'
 
 /** Inhalt einer Playlist in Spotify-Reihenfolge, aus der lokalen Datenbank (sofort, auch offline). */
 export function PlaylistView({ p, profile, onBack, onError, onChanged }: { p: Playlist; profile?: Profile; onBack: () => void; onError: (m: string) => void; onChanged: () => void }) {
@@ -26,6 +27,8 @@ export function PlaylistView({ p, profile, onBack, onError, onChanged }: { p: Pl
   const moveTo = (o: Outlier) => addToPlaylist(o.better!.id, o.track.uri).then(() => setMoved(m => new Set(m).add(o.track.id)), err)
   const write = () => { setDesc('busy'); setSaved(false); writeDescription(p).then(setDesc, e => { setDesc(null); err(e) }) }
   const own = p.ownedByMe || p.collaborative
+  const [sorting, setSorting] = useState<Track | null>(null)   // „Wohin?“: Vorschläge für einen Song dieser Playlist
+  if (sorting) return <SongSuggest song={sorting} back="Zurück zur Playlist" onBack={() => setSorting(null)} onError={onError} onAdded={onChanged} />
 
   return <div className="panels">
     <CoverRow image={p.image} title={p.name} sub={`${p.total} Songs · ${p.ownedByMe ? 'eigene' : p.owner}`}
@@ -64,7 +67,8 @@ export function PlaylistView({ p, profile, onBack, onError, onChanged }: { p: Pl
           play({ context_uri: `spotify:playlist:${p.id}`, offset: { uri: t.uri } }).catch(e => onError(e.message))}>
           <span className="nr">{i + 1}</span>
           <span className="meta"><b>{t.name}</b><small>{t.artists.join(', ')} · {t.album}{t.year ? ` · ${t.year}` : ''}</small></span>
-        </button></li>)}
+        </button>
+        <button className="where" aria-label={`Wohin passt ${t.name}?`} title="Wohin passt der?" onClick={() => setSorting(t)}>Wohin?</button></li>)}
       </ol>
     </section>}
     {missing > 0 && !p.tracksBlocked && <p className="cap">{missing === 1 ? 'Ein Eintrag wird' : `${missing} Einträge werden`} nicht angezeigt (lokale Dateien oder Podcast-Folgen).</p>}

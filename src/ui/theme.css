@@ -152,6 +152,8 @@ svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.7;stroke
 .tracks b{font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tracks small{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tracks li button{display:flex;align-items:center;gap:12px;width:100%;text-align:left;min-width:0}
+.tracks li button.where{width:auto;flex:none;padding:6px 10px;border-radius:999px;font-size:12px;font-weight:700;color:var(--muted);border:1px solid var(--line)}
+.tracks li button.where:active{transform:scale(.94)}
 .player{align-items:center;text-align:center;gap:14px;padding:24px 20px}
 .player .cover{width:min(62vw,240px);height:min(62vw,240px);border-radius:24px}
 .np{display:flex;flex-direction:column;gap:4px;max-width:100%}

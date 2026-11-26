@@ -30,6 +30,9 @@ export const GLASS_DEFAULTS = Object.fromEntries(GLASS_SLIDERS.map(s => [s.k, s.
 const T = { bg: 0, glow: [...THEMES.color.glow] as number[], light: 0 }
 const G = { refr: 1, frost: 0, disp: 1, gloss: 1, tint: 0 }
 
+/** Nicht sichtbar: ausgeblendet oder in einem zugeklappten <details> (Browser legen dessen Inhalt trotzdem aus – sonst schimmerten die Tropfen durch). */
+const hidden = (el: Element) => !!el.closest('[data-hide]') || (!!el.closest('details:not([open])') && !el.closest('details:not([open]) > summary'))
+
 export function applyTheme(id: ThemeId) {
   const t = THEMES[id] ?? THEMES.color
   document.body.dataset.theme = id
@@ -252,7 +255,7 @@ export function initGlass(cv: HTMLCanvasElement) {
     for (const el of document.querySelectorAll<HTMLElement>('.cover[data-src]')) {
       const e = coverTex(el.dataset.src!)
       if (e.ok === false) { el.dataset.gl = '0'; continue }
-      if (!e.t || el.closest('[data-hide]')) continue
+      if (!e.t || hidden(el)) continue
       const r = el.getBoundingClientRect()
       if (r.width < 2 || r.bottom < 0 || r.top > h) continue
       const sc = el.closest('.scroll')
@@ -285,7 +288,7 @@ export function initGlass(cv: HTMLCanvasElement) {
 
     const clipR = new Map<Element, DOMRect>()
     for (const el of document.querySelectorAll<HTMLElement>('.glass, .ind')) {
-      if (el.closest('[data-hide]')) continue
+      if (hidden(el)) continue
       const r = el.getBoundingClientRect()
       if (r.width < 2 || r.height < 2 || r.bottom < -40 || r.top > h + 40 || r.right < -40 || r.left > w + 40) continue
       const L = lensOf(el)
