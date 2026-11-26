@@ -1,6 +1,6 @@
 /* Playlist-Vorschläge für einen Song: lokale Punkte (Künstler schon drin, Epoche, frühere Entscheidungen),
    dann eine KI-Anfrage, die aus den Kandidaten die 3 besten wählt und begründet. Ohne KI: die 3 mit den meisten Punkten. */
-import { completeJson, hasAi, status } from '../ai'
+import { completeJson, hasAi, status, type AiRequest } from '../ai'
 import { db, kv, type Choice, type Playlist, type Profile, type Track } from '../data/db'
 import { addToPlaylist } from '../spotify/api'
 import { getLessons, type Lesson } from './lessons'
@@ -9,7 +9,8 @@ import { getNotes } from './notes'
 import { GUIDE } from './guide'
 import { DEFAULT_SOUND, soundOf, soundVotes, type SoundParams } from './sound'
 
-export interface Suggestion { playlist: Playlist; reason: string }
+/** votes: Abstimmung mehrerer KIs, z. B. „3 von 3 KIs · 72 %“ */
+export interface Suggestion { playlist: Playlist; reason: string; votes?: string }
 /** Bausteine der Punkte – einzeln abschaltbar für die Signal-Analyse der Trefferquote. */
 export const SIGNALS = { artist: 'Künstler schon drin', sound: 'Klang', chosen: 'Deine Hinzufügungen', rejected: '✕ Ablehnungen', lessons: 'Merksätze', genre: 'Genre (Steckbrief)', lang: 'Sprache (Steckbrief)', mood: 'Stimmung (Steckbrief)', tone: 'Unterton (Steckbrief)', era: 'Epoche', general: 'Oft gewählte Playlists', bias: 'Magnet-Bremse' } as const
 export type Signal = keyof typeof SIGNALS
@@ -113,6 +114,7 @@ export async function loadLibrary() {
 }
 
 async function compute(song: Track, opts: { test?: boolean; local?: boolean; lib?: Library }): Promise<SuggestResult> {
+  const t0 = Date.now()
   const lib = opts.lib ?? await loadLibrary()
   const { all, profiles, choices: allChoices, excluded, lessons: allLessons, tracks: tracksOf } = lib
   const lessons = allLessons.filter(l => l.trackId !== song.id)   // den Song selbst nie aus seinem eigenen Merksatz „wissen“
@@ -154,14 +156,16 @@ async function compute(song: Track, opts: { test?: boolean; local?: boolean; lib
         i, n: c.p.name, ...(lib.notes[c.p.id] ? { r: lib.notes[c.p.id].slice(0, 200) } : {}), g: c.prof?.genres.join(', '), e: c.prof?.era, m: c.prof?.mood, a: c.prof?.artists.slice(0, 5).join(', '),
         ...(c.k ? { k: c.k } : {}), ...(c.w ? { w: c.w } : {}), ...(c.kl >= .05 ? { kl: Math.round(c.kl * 100) } : {}),
       })).join('\n')
-      const r1 = await completeJson<{ top: number[] }>({ system: SYSTEM, prompt: `Song: ${songLine(song)}
+      const call1 = completeJson<{ top: number[] }>({ system: SYSTEM, prompt: `Song: ${songLine(song)}
 Wähle die ${SHORTLIST} Playlists, in die dieser Song am ehesten passen könnte, beste zuerst.
 Felder: i = Nummer, n = Name, r = meine eigene Regel für diese Playlist (hat Vorrang), g = Genres, e = Epoche, m = Stimmung, a = Hauptkünstler, k = Songs desselben Künstlers schon drin, w = wie oft ich diesen Künstler schon dorthin gelegt habe, kl = Prozent der klanglich ähnlichsten Songs meiner Sammlung (Tempo, Energie, Stimmung …), die in dieser Playlist liegen.
 Format: {"top":[0,1,…]}
 
 Playlists:
 ${lines}` })
-      const idx = [...new Set((r1.data.top ?? []).filter(i => cands[i]))].slice(0, SHORTLIST)
+      // Live-Suche: braucht die Vorauswahl länger als 8 s, gehen die lokal besten in die Abstimmung (20-s-Ziel)
+      const r1 = opts.test ? await call1 : await Promise.race([call1, wait(t0 + 8_000 - Date.now()).then(() => null)])
+      const idx = r1 ? [...new Set((r1.data.top ?? []).filter(i => cands[i]))].slice(0, SHORTLIST) : cands.slice(0, SHORTLIST).map((_, i) => i)
       short = [...idx.map(i => cands[i]), ...cands.filter(c => c.score > 0).slice(0, 4)].filter((c, i, a) => a.indexOf(c) === i)
     }
     // Merksätze aus früheren Fehlgriffen, je Playlist die 5 neuesten: so lernt die KI die Abgrenzung ähnlicher Playlists
@@ -172,18 +176,19 @@ ${lines}` })
     // Stufe 2: die engere Wahl mit echten Songs aus jeder Playlist – daran erkennt die KI den Stil viel genauer
     const blocks = short.map((c, i) => `[${i}] ${c.p.name}${c.prof ? ` – ${[c.prof.genres.join(', '), c.prof.era, c.prof.mood].filter(Boolean).join(' · ')}` : ''}${lib.notes[c.p.id] ? `\nMeine Regel: ${lib.notes[c.p.id]}` : ''}${c.prof?.summary ? `\n${c.prof.summary}` : ''}${c.w ? `\nIch habe ${c.w}× Songs dieses Künstlers hierher gelegt.` : ''}${c.kl >= .05 ? `\nKlang: ${Math.round(c.kl * 100)} % der ähnlich klingenden Songs meiner Sammlung liegen hier.` : ''}
 Songs: ${sample(song, c.tracks, SONGS_PER_CAND).join('; ') || '(keine Songs bekannt)'}${notes(c.p.id)}`).join('\n\n')
-    const res = await completeJson<{ suggestions: { i: number; reason: string }[] }>({ system: SYSTEM, prompt: `Song: ${songLine(song)}
+    const req = { system: SYSTEM, prompt: `Song: ${songLine(song)}
 Wähle die 3 Playlists, in die dieser Song am besten passt, beste zuerst. Vergleiche mit den Songs, die schon drin sind. „Meine Regel“ hat Vorrang vor allem anderen: widerspricht der Song einer Regel, wähle diese Playlist nicht. Begründe jede mit einem kurzen deutschen Satz (höchstens 15 Wörter), konkret zu Klang, Stimmung, Genre oder ähnlichen Songs.
 Format: {"suggestions":[{"i":0,"reason":"…"}]}
 
-${blocks}` })
-    provider = res.provider
-    const seen = new Set<number>()
-    for (const s of res.data.suggestions ?? []) {
-      if (!short[s.i] || seen.has(s.i)) continue   // erfundene oder doppelte Nummern verwerfen
-      seen.add(s.i); picks.push({ playlist: short[s.i].p, reason: String(s.reason ?? '') })
+${blocks}` }
+    if (opts.test) {   // Trefferquote: eine KI je Song (misst dieselbe Entscheidung, kostet ein Drittel)
+      const res = await completeJson<{ suggestions: { i: number; reason: string }[] }>(req)
+      provider = res.provider
+      picks = clean(res.data.suggestions, short.length).map(s => ({ playlist: short[s.i].p, reason: s.reason }))
+    } else {
+      const r = await council(song, req, short.map(c => c.p), t0)
+      provider = r.provider; picks = r.picks
     }
-    picks = picks.slice(0, 3)
   } catch (e) {
     // KI nicht erreichbar oder Unsinn geantwortet: lieber lokale Vorschläge als gar keine
     console.warn('KI-Vorschlag fehlgeschlagen, nutze lokale Punkte:', e)
@@ -196,6 +201,62 @@ ${blocks}` })
     picks.push({ playlist: c.p, reason: localReason(song, c) })
   }
   return { suggestions: picks, contains, provider, margin, ...(opts.test ? { ranking: cands.map(c => ({ id: c.p.id, parts: c.parts })) } : {}) }
+}
+
+type Pick = { i: number; reason: string }
+/** Antwort prüfen: erfundene oder doppelte Nummern verwerfen, höchstens 3. */
+function clean(list: unknown, count: number): Pick[] {
+  const seen = new Set<number>(), out: Pick[] = []
+  for (const s of Array.isArray(list) ? list : []) {
+    const i = Number(s?.i)
+    if (!Number.isInteger(i) || i < 0 || i >= count || seen.has(i)) continue
+    seen.add(i); out.push({ i, reason: String(s?.reason ?? '') })
+  }
+  return out.slice(0, 3)
+}
+
+const VOTERS = 3          // so viele KIs stimmen parallel ab (jede bei einem anderen Modell)
+const VOTE_MS = 14_000    // bis dahin gesammelte Stimmen zählen; Nachzügler werden ignoriert
+const MAX_MS = 20_000     // spätestens dann steht das Ergebnis – notfalls mit den Punkten
+const wait = (ms: number) => new Promise<void>(r => setTimeout(r, Math.max(0, ms)))
+
+/** Mehrere KIs stimmen ab (Platz 1 = 3, Platz 2 = 2, Platz 3 = 1 Stimme), eine Haupt-KI fasst die Argumente zusammen.
+    Zeitplan: Stimmen bis 14 s; kam bis dahin keine, warten bis 20 s auf die erste; Zusammenfassung nur, wenn noch Zeit ist,
+    sonst die Begründung der besten Stimme. Kommt gar keine Stimme, füllt der Aufrufer mit den Punkten auf. */
+async function council(song: Track, req: AiRequest, pls: Playlist[], t0: number): Promise<{ picks: Suggestion[]; provider: string }> {
+  const votes: { provider: string; picks: Pick[] }[] = []
+  let first!: () => void
+  const firstVote = new Promise<void>(r => { first = r })
+  const all = Promise.all(Array.from({ length: VOTERS }, () => completeJson<{ suggestions: unknown }>(req)
+    .then(r => { const p = clean(r.data.suggestions, pls.length); if (p.length) { votes.push({ provider: r.provider, picks: p }); first() } }).catch(() => {})))
+  await Promise.race([all, wait(t0 + VOTE_MS - Date.now())])
+  if (!votes.length) await Promise.race([all, firstVote, wait(t0 + MAX_MS - Date.now())])
+  const got = [...votes]   // Nachzügler ändern nichts mehr
+  if (!got.length) return { picks: [], provider: Date.now() - t0 >= MAX_MS ? 'Punkte (KI zu langsam)' : 'lokal (KI nicht erreichbar)' }
+
+  const score = new Map<number, { pts: number; n: number; reasons: string[] }>()
+  for (const v of got) v.picks.forEach((p, rank) => {
+    const s = score.get(p.i) ?? { pts: 0, n: 0, reasons: [] }
+    s.pts += 3 - rank; s.n++; if (p.reason) s.reasons.push(p.reason)
+    score.set(p.i, s)
+  })
+  const top = [...score].sort((a, b) => b[1].pts - a[1].pts || b[1].n - a[1].n).slice(0, 3)
+  const picks: Suggestion[] = top.map(([i, s]) => ({ playlist: pls[i], reason: s.reasons[0] ?? '', votes: `${s.n} von ${got.length} KIs · ${Math.round(s.pts / (got.length * 6) * 100)} %` }))
+  let provider = `${got.length} KIs abgestimmt`
+  // Haupt-KI: die Argumente aller Stimmen je Playlist zu einem Satz verdichten – nur mit mehreren Stimmen und wenn die Zeit reicht
+  if (got.length > 1 && top.some(([, s]) => s.reasons.length > 1)) {
+    const sum = completeJson<{ reasons: string[] }>({ system: SYSTEM, prompt: `Song: ${songLine(song)}
+Mehrere Prüfer haben diese Playlists gewählt und begründet. Fasse für jede die stärksten Argumente in einem deutschen Satz zusammen (höchstens 20 Wörter), konkret zu Stimmung, Unterton, Klang oder ähnlichen Songs.
+Format: {"reasons":["…","…","…"]}
+
+${top.map(([i, s], k) => `${k}. ${pls[i].name}: ${s.reasons.join(' | ')}`).join('\n')}` }).catch(() => null)
+    const r = await Promise.race([sum, wait(t0 + MAX_MS - Date.now()).then(() => null)])
+    if (r) {
+      r.data.reasons?.forEach((t, k) => { if (picks[k] && typeof t === 'string' && t.trim()) picks[k].reason = t.trim() })
+      provider += ` · zusammengefasst von ${r.provider}`
+    }
+  }
+  return { picks, provider }
 }
 
 function localReason(song: Track, c: Cand) {

@@ -28,11 +28,12 @@ export function Search({ onError, onAdded }: { onError: (m: string) => void; onA
   </div>
 }
 
-function Sugg(p: { image?: string; name: string; reason: string; state?: 'busy' | 'done'; onAdd: () => void; onNever: () => void }) {
+function Sugg(p: { image?: string; name: string; reason: string; votes?: string; state?: 'busy' | 'done'; onAdd: () => void; onNever: () => void }) {
   return <section className="panel glass sugg">
     <div className="sugg-head"><Cover url={p.image} /><b>{p.name}</b>
       {!p.state && <button className="never" aria-label="Passt auf keinen Fall" title="Passt auf keinen Fall" onClick={p.onNever}>✕</button>}</div>
     <p>{p.reason}</p>
+    {p.votes && <small className="votes">{p.votes}</small>}
     <button className={'pill glass' + (p.state ? '' : ' hot')} disabled={!!p.state} onClick={p.onAdd}>
       {p.state === 'done' ? 'Hinzugefügt ✓' : p.state ? 'Füge hinzu …' : 'Hinzufügen'}
     </button>
@@ -66,8 +67,8 @@ export function SongSuggest({ song, back, onBack, onError, onAdded }: { song: Se
   return <div className="panels">
     <CoverRow image={song.image} title={song.name} sub={`${song.artists.join(', ')}${song.year ? ` · ${song.year}` : ''}`} />
     <div className="actions center"><button className="pill glass" onClick={() => play({ uris: [song.uri] }).catch(e => onError(e.message))}>▶ Abspielen</button></div>
-    {!res && <p className="cap">Suche passende Playlists …</p>}
-    {res?.suggestions.map((s, i) => <Sugg key={s.playlist.id} image={s.playlist.image} name={s.playlist.name} reason={s.reason}
+    {!res && <p className="cap">Mehrere KIs stimmen ab … (höchstens 20 Sekunden)</p>}
+    {res?.suggestions.map((s, i) => <Sugg key={s.playlist.id} image={s.playlist.image} name={s.playlist.name} reason={s.reason} votes={s.votes}
       state={added[s.playlist.id]} onAdd={() => add(i)} onNever={() => no(i)} />)}
     {res && !res.suggestions.length && <p className="cap">Keine eigene Playlist gefunden, in die der Song noch passt.</p>}
     {res?.contains.length ? <p className="cap">Schon drin in: {res.contains.map(p => p.name).join(', ')}</p> : null}
